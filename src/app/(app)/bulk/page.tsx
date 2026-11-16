@@ -27,11 +27,12 @@ export default async function BulkPage({ searchParams }: PageProps<"/bulk">) {
     <>
       <PageHeader title="Bulk send" description="Upload an Excel file to send one template to many numbers." />
       {apps.length === 0 ? (
-        <Empty title="No apps available">
-          <Link href="/accounts" className="text-brand-700 hover:underline">Add an app</Link> first, or ask your admin for access.
+        <Empty title="No WhatsApp numbers available">
+          <Link href="/numbers/new" className="text-brand-700 hover:underline">Connect a WhatsApp number</Link> first, or ask your admin for access.
         </Empty>
       ) : (
-        <BulkForm apps={apps} initialAppId={typeof sp.app === "string" ? sp.app : undefined} />
+        <BulkForm apps={apps} initialAppId={typeof sp.app === "string" ? sp.app : undefined}
+          initialTemplateId={typeof sp.template === "string" ? sp.template : undefined} />
       )}
     </>
   );

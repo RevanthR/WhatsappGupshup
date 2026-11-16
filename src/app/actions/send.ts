@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getAccessibleApp, requireUser } from "@/lib/access";
 import { normalizePhone } from "@/lib/phone";
+import { friendlyError } from "@/lib/errors";
 import { varLabels } from "@/lib/template-vars";
 import { needsMedia, sendTemplateNow, sendTextNow, windowOpen } from "@/lib/send";
 
@@ -12,7 +13,7 @@ export type SendState = { error?: string; ok?: string; messageId?: string } | un
 export async function sendSingleAction(_: SendState, form: FormData): Promise<SendState> {
   const user = await requireUser();
   const app = await getAccessibleApp(user, String(form.get("appId") ?? ""));
-  if (!app.active) return { error: "This app is disabled." };
+  if (!app.active) return { error: "This WhatsApp number is turned off. Turn it on in its Settings." };
   const template = await prisma.template.findFirst({ where: { id: String(form.get("templateId") ?? ""), appId: app.id } });
   if (!template) return { error: "Pick a template." };
   if (template.status !== "APPROVED") return { error: "Only approved templates can be sent." };
@@ -34,7 +35,7 @@ export async function sendSingleAction(_: SendState, form: FormData): Promise<Se
 
   const msg = await sendTemplateNow({ app, template, phone, params, mediaUrl, userId: user.id });
   revalidatePath("/messages");
-  if (msg.status === "FAILED") return { error: msg.error ?? "Gupshup rejected the message." };
+  if (msg.status === "FAILED") return { error: friendlyError(msg.error) ?? msg.error ?? "Gupshup rejected the message." };
   return { ok: `Sent to +${phone}. Delivery status will update in the message log.`, messageId: msg.id };
 }
 
@@ -51,6 +52,6 @@ export async function replyAction(_: SendState, form: FormData): Promise<SendSta
   }
   const msg = await sendTextNow({ app, contactId: contact.id, phone: contact.phone, text, userId: user.id });
   revalidatePath("/inbox");
-  if (msg.status === "FAILED") return { error: msg.error ?? "Gupshup rejected the message." };
+  if (msg.status === "FAILED") return { error: friendlyError(msg.error) ?? msg.error ?? "Gupshup rejected the message." };
   return { ok: "Sent." };
 }

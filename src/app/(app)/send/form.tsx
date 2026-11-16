@@ -11,10 +11,12 @@ import { varLabels } from "@/lib/template-vars";
 type Tpl = PreviewTemplate & { id: string; elementName: string; languageCode: string; paramCount: number };
 type AppOpt = { id: string; name: string; account: { name: string }; templates: Tpl[] };
 
-export function SendForm({ apps, initialAppId, initialPhone }: { apps: AppOpt[]; initialAppId?: string; initialPhone?: string }) {
+export function SendForm({ apps, initialAppId, initialPhone, initialTemplateId }: { apps: AppOpt[]; initialAppId?: string; initialPhone?: string; initialTemplateId?: string }) {
   const [appId, setAppId] = useState(apps.find((a) => a.id === initialAppId)?.id ?? apps[0].id);
   const app = apps.find((a) => a.id === appId)!;
-  const [templateId, setTemplateId] = useState(app.templates[0]?.id ?? "");
+  const [templateId, setTemplateId] = useState(
+    app.templates.find((t) => t.id === initialTemplateId)?.id ?? app.templates[0]?.id ?? "",
+  );
   const template = app.templates.find((t) => t.id === templateId);
   const [values, setValues] = useState<Record<string, string>>({});
   const [mediaUrl, setMediaUrl] = useState("");
@@ -33,7 +35,7 @@ export function SendForm({ apps, initialAppId, initialPhone }: { apps: AppOpt[];
           {state?.ok ? <Alert tone="success">{state.ok}</Alert> : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="label" htmlFor="appId">App</label>
+              <label className="label" htmlFor="appId">From number</label>
               <select
                 id="appId"
                 name="appId"

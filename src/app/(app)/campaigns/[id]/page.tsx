@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ErrorText } from "@/components/error-text";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
@@ -35,7 +36,14 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
     ...(filter === "PENDING" ? { status: { in: ["QUEUED" as const, "SENDING" as const] } } : {}),
     ...(filter === "DELIVERED" ? { status: { in: ["DELIVERED" as const, "READ" as const] } } : {}),
   };
-  const [groups, rows, filteredCount] = await Promise.all([
+  const [failReasons, groups, rows, filteredCount] = await Promise.all([
+    prisma.message.groupBy({
+      by: ["error"],
+      where: { campaignId: id, status: "FAILED" },
+      _count: true,
+      orderBy: { _count: { error: "desc" } },
+      take: 5,
+    }),
     prisma.message.groupBy({ by: ["status"], where: { campaignId: id }, _count: true }),
     prisma.message.findMany({ where, orderBy: { rowNumber: "asc" }, skip: (page - 1) * PAGE, take: PAGE }),
     prisma.message.count({ where }),
@@ -142,6 +150,19 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
         </>
       )}
 
+      {failReasons.length ? (
+        <Card className="mb-6" title="Why messages failed">
+          <ul className="space-y-2">
+            {failReasons.map((r) => (
+              <li key={r.error ?? "none"} className="flex items-start justify-between gap-3 text-sm">
+                <ErrorText error={r.error ?? "Unknown error"} />
+                <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold tabular-nums text-red-700">{r._count}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
       <Card
         title="Recipients"
         actions={
@@ -166,7 +187,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
                     <td className="font-mono text-xs">+{m.phone}</td>
                     {labels.map((l, i) => <td key={l} className="max-w-[12rem] truncate">{p[i]}</td>)}
                     <td><Badge value={m.status} /></td>
-                    <td className="max-w-xs text-xs text-gray-500">{m.error ?? fmtDate(m.readAt ?? m.deliveredAt ?? m.sentAt ?? m.submittedAt)}</td>
+                    <td className="max-w-xs text-xs text-gray-500">{m.error ? <ErrorText error={m.error} /> : fmtDate(m.readAt ?? m.deliveredAt ?? m.sentAt ?? m.submittedAt)}</td>
                   </tr>
                 );
               })}

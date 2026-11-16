@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ErrorText } from "@/components/error-text";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
 import { formatPhone } from "@/lib/phone";
@@ -71,7 +72,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
             <h1 className="px-1 text-lg font-semibold text-gray-900">Inbox</h1>
             <form className="flex gap-2" action="/inbox">
               <select name="app" defaultValue={appFilter} className="input w-1/2">
-                <option value="">All apps</option>
+                <option value="">All numbers</option>
                 {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
               <input name="q" defaultValue={q} placeholder="Search number" className="input w-1/2" inputMode="tel" />
@@ -132,7 +133,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
                         <span>{fmtDate(m.createdAt)}</span>
                         {m.direction === "OUTBOUND" ? <Badge value={m.status} /> : null}
                       </div>
-                      {m.error ? <p className="mt-1 text-[11px] text-red-700">{m.error}</p> : null}
+                      {m.error ? <ErrorText error={m.error} className="mt-1 text-[11px]" /> : null}
                     </div>
                   </div>
                 ))}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ErrorText } from "@/components/error-text";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
 import { formatPhone } from "@/lib/phone";
@@ -55,7 +56,7 @@ export default async function MessagesPage({ searchParams }: PageProps<"/message
       <PageHeader title="Message log" description={`${count.toLocaleString("en-IN")} message${count === 1 ? "" : "s"}`} />
       <form className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" action="/messages">
         <select name="app" defaultValue={app} className="input">
-          <option value="">All apps</option>
+          <option value="">All numbers</option>
           {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <select name="status" defaultValue={status} className="input">
@@ -86,7 +87,7 @@ export default async function MessagesPage({ searchParams }: PageProps<"/message
                   <Badge value={m.status} />
                 </div>
                 {m.text ? <p className="mt-2 line-clamp-3 text-sm text-gray-700">{m.text}</p> : null}
-                {m.error ? <p className="mt-1 text-xs text-red-700">{m.error}</p> : null}
+                {m.error ? <ErrorText error={m.error} className="mt-1 text-xs" /> : null}
               </li>
             ))}
           </ul>
@@ -94,7 +95,7 @@ export default async function MessagesPage({ searchParams }: PageProps<"/message
             <TableWrap>
               <table className="table">
                 <thead>
-                  <tr><th>When</th><th>Number</th><th>App</th><th>Message</th><th>Source</th><th>Status</th></tr>
+                  <tr><th>When</th><th>Number</th><th>From</th><th>Message</th><th>Source</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                   {rows.map((m) => (
@@ -108,7 +109,7 @@ export default async function MessagesPage({ searchParams }: PageProps<"/message
                       <td className="max-w-md">
                         {m.template ? <p className="font-mono text-xs text-gray-500">{m.template.elementName}</p> : null}
                         <p className="line-clamp-2 text-gray-700">{m.text}</p>
-                        {m.error ? <p className="mt-1 text-xs text-red-700">{m.error}</p> : null}
+                        {m.error ? <ErrorText error={m.error} className="mt-1 text-xs" /> : null}
                       </td>
                       <td className="text-xs text-gray-500">
                         {m.campaign ? <Link href={`/campaigns/${m.campaign.id}`} className="text-brand-700 hover:underline">{m.campaign.name}</Link> : m.sentBy?.name ?? (m.direction === "INBOUND" ? "Customer" : "")}

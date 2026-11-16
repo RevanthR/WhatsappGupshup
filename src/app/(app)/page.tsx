@@ -2,7 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
 import { daysAgo } from "@/lib/send";
-import { Badge, Card, Empty, fmtDate, PageHeader, Stat } from "@/components/ui";
+import { Badge, Card, fmtDate, PageHeader, Stat } from "@/components/ui";
 
 export const metadata = { title: "Dashboard" };
 
@@ -10,8 +10,12 @@ export default async function Dashboard() {
   const user = await requireUser();
   const since = daysAgo(7);
   const scope = { app: appWhere(user) };
-  const [appCount, groups, unread, running, recent] = await Promise.all([
-    prisma.app.count({ where: { ...appWhere(user), active: true } }),
+  const [apps, anySent, groups, unread, running, recent] = await Promise.all([
+    prisma.app.findMany({
+      where: { ...appWhere(user), active: true },
+      select: { id: true, lastWebhookAt: true, _count: { select: { templates: { where: { status: "APPROVED" } } } } },
+    }),
+    prisma.message.findFirst({ where: { ...scope, direction: "OUTBOUND" }, select: { id: true } }),
     prisma.message.groupBy({ by: ["status"], where: { ...scope, createdAt: { gte: since } }, _count: true }),
     prisma.contact.count({ where: { ...scope, unreadCount: { gt: 0 } } }),
     prisma.campaign.findMany({
@@ -47,13 +51,26 @@ export default async function Dashboard() {
           </>
         }
       />
-      {appCount === 0 ? (
-        <div className="mb-6">
-          <Empty title="No apps connected yet">
-            <Link href="/accounts" className="font-medium text-brand-700 hover:underline">Add a Gupshup account and app</Link> to start sending.
-          </Empty>
-        </div>
-      ) : null}
+      <GetStarted
+        steps={[
+          { done: apps.length > 0, title: "Connect a WhatsApp number", text: "Link your Gupshup app with its API key.", href: "/numbers/new", cta: "Connect" },
+          {
+            done: apps.some((a) => a._count.templates > 0),
+            title: "Have an approved template",
+            text: "Create templates in Gupshup. Once WhatsApp approves them, sync here.",
+            href: apps[0] ? `/numbers/${apps[0].id}?tab=templates` : "/templates",
+            cta: "View templates",
+          },
+          {
+            done: apps.some((a) => a.lastWebhookAt),
+            title: "Set up the webhook",
+            text: "Paste one URL in Gupshup to get delivery reports and replies.",
+            href: apps[0] ? `/numbers/${apps[0].id}?tab=webhook` : "/numbers",
+            cta: "Set up",
+          },
+          { done: !!anySent, title: "Send your first message", text: "Try it on your own number first.", href: "/send", cta: "Send" },
+        ]}
+      />
       <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
         <Stat label="Sent" value={sent.toLocaleString("en-IN")} href="/messages?dir=out" />
         <Stat label="Delivered" value={delivered.toLocaleString("en-IN")} sub={pct(delivered)} href="/messages?status=DELIVERED" />
@@ -103,5 +120,42 @@ export default async function Dashboard() {
         </Card>
       </div>
     </>
+  );
+}
+
+function GetStarted({ steps }: { steps: { done: boolean; title: string; text: string; href: string; cta: string }[] }) {
+  const doneCount = steps.filter((s) => s.done).length;
+  if (doneCount === steps.length) return null;
+  const next = steps.findIndex((s) => !s.done);
+  return (
+    <div className="card mb-6 p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-gray-900">Get started</h2>
+          <p className="text-sm text-gray-500">{doneCount} of {steps.length} done</p>
+        </div>
+        <div className="h-2 w-32 overflow-hidden rounded-full bg-gray-100">
+          <div className="h-full rounded-full bg-brand-500" style={{ width: `${(doneCount / steps.length) * 100}%` }} />
+        </div>
+      </div>
+      <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {steps.map((s, i) => (
+          <li key={s.title} className={`rounded-lg border p-3 ${i === next ? "border-brand-500 bg-brand-50" : "border-gray-200"}`}>
+            <p className="flex items-center gap-2 text-sm font-medium text-gray-900">
+              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] ${s.done ? "bg-emerald-600 text-white" : "bg-gray-200 text-gray-600"}`}>
+                {s.done ? "✓" : i + 1}
+              </span>
+              {s.title}
+            </p>
+            <p className="mt-1 text-xs text-gray-600">{s.text}</p>
+            {!s.done ? (
+              <Link href={s.href} className={`mt-2 inline-block text-xs font-medium ${i === next ? "btn-primary px-3 py-1.5" : "text-brand-700 hover:underline"}`}>
+                {s.cta}
+              </Link>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

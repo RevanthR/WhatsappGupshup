@@ -25,6 +25,7 @@ export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.active) return null;
         if (!(await bcrypt.compare(password, user.passwordHash))) return null;
+        await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
         return {
           id: user.id,

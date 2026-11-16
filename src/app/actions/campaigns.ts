@@ -19,7 +19,7 @@ const MAX_BYTES = 4 * 1024 * 1024;
 export async function uploadBulkAction(_: UploadState, form: FormData): Promise<UploadState> {
   const user = await requireUser();
   const app = await getAccessibleApp(user, String(form.get("appId") ?? ""));
-  if (!app.active) return { error: "This app is disabled." };
+  if (!app.active) return { error: "This WhatsApp number is turned off. Turn it on in its Settings." };
   const template = await prisma.template.findFirst({
     where: { id: String(form.get("templateId") ?? ""), appId: app.id, status: "APPROVED" },
   });

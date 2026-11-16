@@ -56,7 +56,7 @@ export default async function CampaignsPage() {
           <div className="card hidden overflow-hidden md:block">
             <table className="table">
               <thead>
-                <tr><th>Campaign</th><th>App / template</th><th>Status</th><th className="w-48">Progress</th><th>Delivered</th><th>Failed</th><th>Created</th></tr>
+                <tr><th>Campaign</th><th>Number / template</th><th>Status</th><th className="w-48">Progress</th><th>Delivered</th><th>Failed</th><th>Created</th></tr>
               </thead>
               <tbody>
                 {campaigns.map((c) => {

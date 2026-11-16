@@ -45,6 +45,7 @@ model User {
   role               Role     @default(USER)
   active             Boolean  @default(true)
   mustChangePassword Boolean  @default(true)
+  lastLoginAt        DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -92,6 +93,8 @@ model App {
   webhookToken    String    @unique
   lastWebhookAt   DateTime?
   templatesSyncedAt DateTime?
+  keyVerifiedAt   DateTime? // last successful call to Gupshup with this key
+  lastSyncError   String?
   active          Boolean   @default(true)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

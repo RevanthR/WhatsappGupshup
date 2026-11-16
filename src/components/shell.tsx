@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
-type NavItem = { href: string; label: string; icon: ReactNode; admin?: boolean; badge?: number };
+type NavItem = { href: string; label: string; icon: ReactNode; badge?: number; also?: string[] };
+type NavGroup = { title?: string; admin?: boolean; items: NavItem[] };
 
 const I = {
   home: <path d="M3 10.5 12 3l9 7.5V21H15v-6H9v6H3z" />,
@@ -14,6 +15,8 @@ const I = {
   inbox: <path d="M3 13h5l2 3h4l2-3h5M5 4h14l2 9v7H3v-7z" />,
   log: <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />,
   acct: <path d="M3 21V7l9-4 9 4v14M9 21v-6h6v6" />,
+  tpl: <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-4-3H6a2 2 0 0 1-2-2zM8 8h8M8 12h5" />,
+  phone: <path d="M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM11 18h2" />,
   users: <path d="M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M2 21v-2a4 4 0 0 1 3-3.9" />,
 };
 
@@ -39,36 +42,52 @@ export function Shell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  const items: NavItem[] = [
-    { href: "/", label: "Dashboard", icon: I.home },
-    { href: "/send", label: "Send message", icon: I.send },
-    { href: "/bulk", label: "Bulk send", icon: I.bulk },
-    { href: "/campaigns", label: "Campaigns", icon: I.camp },
-    { href: "/inbox", label: "Inbox", icon: I.inbox, badge: unread },
-    { href: "/messages", label: "Message log", icon: I.log },
-    { href: "/accounts", label: "Accounts & apps", icon: I.acct },
-    { href: "/users", label: "Users", icon: I.users, admin: true },
+  const groups: NavGroup[] = [
+    {
+      items: [
+        { href: "/", label: "Dashboard", icon: I.home },
+        { href: "/send", label: "Send message", icon: I.send },
+        { href: "/bulk", label: "Bulk send", icon: I.bulk },
+        { href: "/campaigns", label: "Campaigns", icon: I.camp },
+        { href: "/inbox", label: "Inbox", icon: I.inbox, badge: unread },
+        { href: "/messages", label: "Message log", icon: I.log },
+      ],
+    },
+    {
+      title: "Setup",
+      items: [
+        { href: "/numbers", label: "WhatsApp numbers", icon: I.phone, also: ["/accounts"] },
+        { href: "/templates", label: "Templates", icon: I.tpl },
+      ],
+    },
+    { title: "Admin", admin: true, items: [{ href: "/users", label: "Users", icon: I.users }] },
   ];
-  const visible = items.filter((i) => !i.admin || user.role === "SUPER_ADMIN");
-  const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+  const visible = groups.filter((g) => !g.admin || user.role === "SUPER_ADMIN");
+  const isActive = (item: NavItem) =>
+    item.href === "/" ? pathname === "/" : [item.href, ...(item.also ?? [])].some((h) => pathname.startsWith(h));
 
   const nav = (
-    <nav className="flex flex-1 flex-col gap-0.5 p-3">
-      {visible.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          onClick={() => setOpen(false)}
-          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-            isActive(item.href) ? "bg-brand-50 text-brand-700" : "text-gray-700 hover:bg-gray-100"
-          }`}
-        >
-          <Icon d={item.icon} />
-          <span className="flex-1">{item.label}</span>
-          {item.badge ? (
-            <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">{item.badge > 99 ? "99+" : item.badge}</span>
-          ) : null}
-        </Link>
+    <nav className="flex flex-1 flex-col gap-4 p-3">
+      {visible.map((g, gi) => (
+        <div key={gi} className="flex flex-col gap-0.5">
+          {g.title ? <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{g.title}</p> : null}
+          {g.items.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={() => setOpen(false)}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                isActive(item) ? "bg-brand-50 text-brand-700" : "text-gray-700 hover:bg-gray-100"
+              }`}
+            >
+              <Icon d={item.icon} />
+              <span className="flex-1">{item.label}</span>
+              {item.badge ? (
+                <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">{item.badge > 99 ? "99+" : item.badge}</span>
+              ) : null}
+            </Link>
+          ))}
+        </div>
       ))}
     </nav>
   );

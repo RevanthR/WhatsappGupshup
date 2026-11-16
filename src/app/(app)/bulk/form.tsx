@@ -23,10 +23,12 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-export function BulkForm({ apps, initialAppId }: { apps: AppOpt[]; initialAppId?: string }) {
+export function BulkForm({ apps, initialAppId, initialTemplateId }: { apps: AppOpt[]; initialAppId?: string; initialTemplateId?: string }) {
   const [appId, setAppId] = useState(apps.find((a) => a.id === initialAppId)?.id ?? apps[0].id);
   const app = apps.find((a) => a.id === appId)!;
-  const [templateId, setTemplateId] = useState(app.templates[0]?.id ?? "");
+  const [templateId, setTemplateId] = useState(
+    app.templates.find((t) => t.id === initialTemplateId)?.id ?? app.templates[0]?.id ?? "",
+  );
   const template = app.templates.find((t) => t.id === templateId);
   const [state, action, pending] = useActionState(uploadBulkAction, undefined);
   const [fileName, setFileName] = useState("");
@@ -40,10 +42,10 @@ export function BulkForm({ apps, initialAppId }: { apps: AppOpt[]; initialAppId?
     <div className="grid gap-6 lg:grid-cols-5">
       <Card className="lg:col-span-3">
         <form action={action} className="space-y-6">
-          <Step n={1} title="Choose app and template">
+          <Step n={1} title="Choose number and template">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="label" htmlFor="appId">App</label>
+                <label className="label" htmlFor="appId">From number</label>
                 <select
                   id="appId"
                   name="appId"
