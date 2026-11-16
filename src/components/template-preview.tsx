@@ -6,7 +6,10 @@ export type PreviewTemplate = {
   footer: string | null;
   templateType: string;
   sampleMediaUrl?: string | null;
+  buttons?: unknown;
 };
+
+type Btn = { type?: string; text?: string };
 
 function fill(text: string, params: string[]) {
   const parts = text.split(/(\{\{\s*\d+\s*\}\})/g);
@@ -43,6 +46,16 @@ export function TemplatePreview({ template, params, mediaUrl }: { template: Prev
         <p className="whitespace-pre-wrap break-words text-sm text-gray-800">{fill(template.body, split.body)}</p>
         {template.footer ? <p className="mt-1 text-xs text-gray-500">{template.footer}</p> : null}
       </div>
+      {Array.isArray(template.buttons) && template.buttons.length ? (
+        <div className="mt-1 max-w-sm space-y-1">
+          {(template.buttons as Btn[]).slice(0, 10).map((b, i) => (
+            <div key={i} className="flex items-center justify-center gap-1.5 rounded-lg bg-white py-2 text-sm font-medium text-sky-600 shadow-sm">
+              <span aria-hidden>{b.type === "URL" ? "↗" : b.type === "PHONE_NUMBER" ? "✆" : "↩"}</span>
+              {b.text || "Button"}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

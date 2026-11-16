@@ -94,6 +94,7 @@ export type RemoteTemplate = {
   buttons: unknown;
   paramCount: number;
   sampleMediaUrl: string | null;
+  reason: string | null;
   raw: unknown;
 };
 
@@ -150,30 +151,95 @@ export async function listTemplates(apiKey: string, appName: string, appId?: str
     if (!appId) errors.push("Tip: add the Gupshup app ID in Settings. App-level API keys need it.");
     throw new Error(errors.join(" | "));
   }
-  const json = { templates: rows };
-  return (json.templates ?? []).map((t) => {
-    const container = parseJson(t.containerMeta) ?? {};
-    const body = String(container.data ?? t.data ?? "");
-    const header = typeof container.header === "string" ? container.header : null;
-    const footer = typeof container.footer === "string" ? container.footer : null;
-    const meta = parseJson(t.meta) ?? {};
-    const sampleMediaUrl =
-      typeof meta.mediaUrl === "string" && /^https?:\/\//.test(meta.mediaUrl) ? meta.mediaUrl : null;
-    return {
-      id: String(t.id),
-      elementName: String(t.elementName ?? t.id),
-      languageCode: String(t.languageCode ?? "en"),
-      category: t.category ? String(t.category) : null,
-      status: String(t.status ?? "UNKNOWN").toUpperCase(),
-      templateType: String(t.templateType ?? "TEXT").toUpperCase(),
-      body,
-      header,
-      footer,
-      buttons: container.buttons ?? null,
-      // Text header variables come first, then body variables.
-      paramCount: maxVar(header) + maxVar(body),
-      sampleMediaUrl,
-      raw: t,
-    };
-  });
+  return rows.map(parseRemoteTemplate);
+}
+
+export type NewTemplate = {
+  elementName: string;
+  languageCode: string;
+  category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
+  templateType: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+  vertical: string;
+  content: string;
+  example: string;
+  header?: string;
+  exampleHeader?: string;
+  footer?: string;
+  buttons?: { type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER"; text: string; url?: string; phone_number?: string }[];
+  mediaUrl?: string;
+  allowTemplateCategoryChange: boolean;
+};
+
+// Submits a template for WhatsApp approval. Works with app-level API keys on
+// api.gupshup.io (tested). Media samples go as a public mediaUrl, which Gupshup
+// fetches itself; its upload endpoint returns a message media ID that Meta
+// rejects as a template sample.
+export async function createTemplate(
+  apiKey: string,
+  appId: string,
+  t: NewTemplate,
+): Promise<{ ok: true; template: Record<string, unknown> } | { ok: false; error: string }> {
+  const form: Record<string, string> = {
+    elementName: t.elementName,
+    languageCode: t.languageCode,
+    category: t.category,
+    templateType: t.templateType,
+    vertical: t.vertical,
+    content: t.content,
+    example: t.example,
+    enableSample: "true",
+    allowTemplateCategoryChange: String(t.allowTemplateCategoryChange),
+  };
+  if (t.header) form.header = t.header;
+  if (t.exampleHeader) form.exampleHeader = t.exampleHeader;
+  if (t.footer) form.footer = t.footer;
+  if (t.buttons?.length) form.buttons = JSON.stringify(t.buttons);
+  if (t.mediaUrl) form.mediaUrl = t.mediaUrl;
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/wa/app/${encodeURIComponent(appId)}/template`, {
+      method: "POST",
+      headers: { apikey: apiKey, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(form).toString(),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    return { ok: false, error: `Network error: ${(e as Error).message}` };
+  }
+  const text = await res.text();
+  let json: { status?: string; message?: unknown; template?: Record<string, unknown> } = {};
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return { ok: false, error: `Gupshup ${res.status}: ${text.slice(0, 300)}` };
+  }
+  if (res.ok && json.status === "success" && json.template) return { ok: true, template: json.template };
+  const msg = typeof json.message === "string" ? json.message : JSON.stringify(json.message ?? json);
+  return { ok: false, error: `Gupshup ${res.status}: ${msg}`.slice(0, 500) };
+}
+
+// Maps one raw Gupshup template object to our shape (shared by list and create).
+export function parseRemoteTemplate(t: Record<string, unknown>): RemoteTemplate {
+  const container = parseJson(t.containerMeta) ?? {};
+  const body = String(container.data ?? t.data ?? "");
+  const header = typeof container.header === "string" ? container.header : null;
+  const footer = typeof container.footer === "string" ? container.footer : null;
+  const meta = parseJson(t.meta) ?? {};
+  const mediaUrl = (typeof meta.mediaUrl === "string" && meta.mediaUrl) || (typeof container.mediaUrl === "string" && container.mediaUrl) || "";
+  return {
+    id: String(t.id),
+    elementName: String(t.elementName ?? t.id),
+    languageCode: String(t.languageCode ?? "en"),
+    category: t.category ? String(t.category) : null,
+    status: String(t.status ?? "UNKNOWN").toUpperCase(),
+    templateType: String(t.templateType ?? "TEXT").toUpperCase(),
+    body,
+    header,
+    footer,
+    buttons: container.buttons ?? null,
+    paramCount: maxVar(header) + maxVar(body),
+    sampleMediaUrl: /^https?:\/\//.test(mediaUrl) ? mediaUrl : null,
+    reason: typeof t.reason === "string" && t.reason ? t.reason : null,
+    raw: t,
+  };
 }

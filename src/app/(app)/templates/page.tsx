@@ -4,7 +4,8 @@ import { appWhere, requireUser } from "@/lib/access";
 import { syncAllTemplatesAction } from "@/app/actions/accounts";
 import { ActionForm } from "@/components/action-form";
 import { TemplateCard } from "@/components/template-card";
-import { Empty, PageHeader } from "@/components/ui";
+import { Alert, Empty, PageHeader } from "@/components/ui";
+import { PendingRefresh } from "@/components/pending-refresh";
 import type { Prisma } from "@/generated/prisma/client";
 
 export const metadata = { title: "Templates" };
@@ -28,6 +29,11 @@ export default async function TemplatesPage({ searchParams }: PageProps<"/templa
     prisma.template.findMany({ where, include: { app: { select: { name: true } } }, orderBy: [{ status: "asc" }, { elementName: "asc" }], take: 200 }),
     prisma.template.groupBy({ by: ["status"], where: { app: appWhere(user), status: { not: "DELETED" } }, _count: true }),
   ]);
+  const pendingApps = [
+    ...new Set(
+      (await prisma.template.findMany({ where: { app: appWhere(user), status: "PENDING" }, select: { appId: true } })).map((t) => t.appId),
+    ),
+  ];
   const approvedCount = counts.find((c) => c.status === "APPROVED")?._count ?? 0;
   const allCount = counts.reduce((n, c) => n + c._count, 0);
   const link = (o: Record<string, string>) => {
@@ -40,15 +46,26 @@ export default async function TemplatesPage({ searchParams }: PageProps<"/templa
     <>
       <PageHeader
         title="Templates"
-        description="Messages approved by WhatsApp. Create or edit them in Gupshup, then sync."
+        description="Messages approved by WhatsApp. Create new ones here or in Gupshup."
         actions={
           apps.length ? (
-            <ActionForm action={syncAllTemplatesAction} submit="Sync all from Gupshup" pendingLabel="Syncing..." submitClass="btn-secondary" className="" inlineAlerts={false}>
-              {null}
-            </ActionForm>
+            <>
+              <ActionForm action={syncAllTemplatesAction} submit="Sync from Gupshup" pendingLabel="Syncing..." submitClass="btn-secondary" className="" inlineAlerts={false}>
+                {null}
+              </ActionForm>
+              <Link href={appId ? `/templates/new?app=${appId}` : "/templates/new"} className="btn-primary">+ New template</Link>
+            </>
           ) : null
         }
       />
+      {str("submitted") ? (
+        <div className="mb-4">
+          <Alert tone="success">
+            <b className="font-mono">{str("submitted")}</b> was sent to WhatsApp for review. It shows as Pending below and updates on its own, usually within minutes to a few hours.
+          </Alert>
+        </div>
+      ) : null}
+      {pendingApps.length ? <PendingRefresh appIds={pendingApps} /> : null}
       {apps.length === 0 ? (
         <Empty title="No WhatsApp numbers yet">
           <Link href="/numbers/new" className="font-medium text-brand-700 hover:underline">Connect a number</Link> to see its templates.

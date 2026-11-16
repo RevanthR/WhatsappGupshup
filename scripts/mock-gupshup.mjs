@@ -5,6 +5,12 @@ http.createServer((req, res) => {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     res.setHeader("content-type", "application/json");
+    if (req.method === "POST" && /^\/wa\/app\/[^/]+\/template/.test(req.url)) {
+      const f = new URLSearchParams(body);
+      console.log("create", Object.fromEntries(f));
+      if (!f.get("elementName")) return res.end(JSON.stringify({ status: "error", message: "Invalid element name provided" }));
+      return res.end(JSON.stringify({ status: "success", template: { id: "new-" + Date.now(), elementName: f.get("elementName"), languageCode: f.get("languageCode"), category: f.get("category"), status: "PENDING", templateType: f.get("templateType"), data: f.get("content"), containerMeta: JSON.stringify({ data: f.get("content"), header: f.get("header") || undefined, footer: f.get("footer") || undefined, buttons: f.get("buttons") ? JSON.parse(f.get("buttons")) : undefined, mediaUrl: f.get("mediaUrl") || undefined }) } }));
+    }
     if (req.url.startsWith("/sm/api/v1/template/list/") || /^\/wa\/app\/[^/]+\/template/.test(req.url)) {
       return res.end(JSON.stringify({ status: "success", templates: [
         { id: "tpl-1", elementName: "order_update", languageCode: "en", category: "UTILITY", status: "APPROVED", templateType: "TEXT", data: "Hi {{1}}, your order {{2}} is on the way.", containerMeta: JSON.stringify({ data: "Hi {{1}}, your order {{2}} is on the way.", footer: "Reply STOP to opt out" }) },

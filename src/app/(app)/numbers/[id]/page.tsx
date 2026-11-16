@@ -12,6 +12,7 @@ import { ReadinessChips, isReady } from "@/components/readiness";
 import { TemplateCard } from "@/components/template-card";
 import { Alert, Card, Empty, fmtDate, PageHeader } from "@/components/ui";
 import { TestConnection } from "./test-connection";
+import { PendingRefresh } from "@/components/pending-refresh";
 
 const TABS = [
   ["templates", "Templates"],
@@ -91,17 +92,21 @@ export default async function NumberPage({ params, searchParams }: PageProps<"/n
 
       {tab === "templates" ? (
         <>
+          {others.some((t) => t.status === "PENDING") ? <PendingRefresh appIds={[app.id]} /> : null}
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-gray-500">
-              Create and edit templates in Gupshup. They appear here after WhatsApp approves them.
+              New templates go to WhatsApp for review and become sendable once approved.
               {app.templatesSyncedAt ? ` Last synced ${fmtDate(app.templatesSyncedAt)}.` : ""}
             </p>
-            <ActionForm action={syncTemplatesAction} submit="Sync from Gupshup" pendingLabel="Syncing..." submitClass="btn-secondary" className="" inlineAlerts={false}>
-              <input type="hidden" name="id" value={app.id} />
-            </ActionForm>
+            <div className="flex flex-wrap gap-2">
+              <ActionForm action={syncTemplatesAction} submit="Sync from Gupshup" pendingLabel="Syncing..." submitClass="btn-secondary" className="" inlineAlerts={false}>
+                <input type="hidden" name="id" value={app.id} />
+              </ActionForm>
+              <Link href={`/templates/new?app=${app.id}`} className="btn-primary">+ New template</Link>
+            </div>
           </div>
           {templates.length === 0 ? (
-            <Empty title="No templates yet">Create a template in Gupshup, wait for approval, then click Sync.</Empty>
+            <Empty title="No templates yet"><Link href={`/templates/new?app=${app.id}`} className="text-brand-700 hover:underline">Create your first template</Link>. WhatsApp reviews it before it can be sent.</Empty>
           ) : (
             <>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

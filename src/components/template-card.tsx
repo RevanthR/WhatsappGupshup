@@ -16,6 +16,8 @@ type T = {
   footer: string | null;
   sampleMediaUrl: string | null;
   paramCount: number;
+  buttons?: unknown;
+  reason?: string | null;
 };
 
 const STATUS_HELP: Record<string, string> = {
@@ -61,7 +63,7 @@ export function TemplateCard({ t, numberName }: { t: T; numberName?: string }) {
             <Link href={`/bulk?app=${t.appId}&template=${t.id}`} className="btn-primary px-3 py-1.5 text-xs">Bulk send</Link>
           </div>
         ) : (
-          <span className="text-xs text-gray-500">{STATUS_HELP[t.status] ?? "Not sendable"}</span>
+          <span className="text-xs text-gray-500">{t.reason ? `${STATUS_HELP[t.status] ?? t.status}: ${t.reason}` : STATUS_HELP[t.status] ?? "Not sendable"}</span>
         )}
       </div>
     </div>
