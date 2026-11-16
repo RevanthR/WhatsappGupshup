@@ -23,8 +23,9 @@ export function AppFields({ values = {}, requireKey = false, narrow = false }: {
         <input id="sourceNumber" name="sourceNumber" required defaultValue={values.sourceNumber ? `+${values.sourceNumber}` : ""} className="input" placeholder="+91 98765 43210" inputMode="tel" />
       </div>
       <div>
-        <label className="label" htmlFor="gupshupAppId">Gupshup app ID (optional)</label>
+        <label className="label" htmlFor="gupshupAppId">Gupshup app ID</label>
         <input id="gupshupAppId" name="gupshupAppId" defaultValue={values.gupshupAppId ?? ""} className="input" placeholder="xxxxxxxx-xxxx-..." />
+        <p className="hint">Needed for app-level API keys (newer Gupshup dashboard).</p>
       </div>
       <div className={narrow ? "sm:col-span-2 lg:col-span-1" : "sm:col-span-2"}>
         <label className="label" htmlFor="apiKey">API key</label>

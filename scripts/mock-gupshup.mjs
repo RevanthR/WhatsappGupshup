@@ -5,7 +5,7 @@ http.createServer((req, res) => {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     res.setHeader("content-type", "application/json");
-    if (req.url.startsWith("/sm/api/v1/template/list/")) {
+    if (req.url.startsWith("/sm/api/v1/template/list/") || /^\/wa\/app\/[^/]+\/template/.test(req.url)) {
       return res.end(JSON.stringify({ status: "success", templates: [
         { id: "tpl-1", elementName: "order_update", languageCode: "en", category: "UTILITY", status: "APPROVED", templateType: "TEXT", data: "Hi {{1}}, your order {{2}} is on the way.", containerMeta: JSON.stringify({ data: "Hi {{1}}, your order {{2}} is on the way.", footer: "Reply STOP to opt out" }) },
         { id: "tpl-2", elementName: "promo_image", languageCode: "en", category: "MARKETING", status: "APPROVED", templateType: "IMAGE", data: "Hello {{1}}! New arrivals are here.", containerMeta: JSON.stringify({ data: "Hello {{1}}! New arrivals are here." }) },

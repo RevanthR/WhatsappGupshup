@@ -106,8 +106,8 @@ function parseJson(v: unknown): Record<string, unknown> | null {
   }
 }
 
-export async function listTemplates(apiKey: string, appName: string): Promise<RemoteTemplate[]> {
-  const res = await fetch(`${BASE}/sm/api/v1/template/list/${encodeURIComponent(appName)}`, {
+async function fetchTemplates(url: string, apiKey: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(url, {
     headers: { apikey: apiKey },
     cache: "no-store",
     signal: AbortSignal.timeout(20_000),
@@ -122,6 +122,34 @@ export async function listTemplates(apiKey: string, appName: string): Promise<Re
   if (!res.ok || json.status !== "success") {
     throw new Error(`Gupshup ${res.status}: ${json.message ?? text.slice(0, 200)}`);
   }
+  return json.templates ?? [];
+}
+
+// Newer Gupshup dashboards issue app-level API keys, which only work on the
+// app-scoped endpoint (needs the app ID). Older account-level keys work on
+// the /sm endpoint (needs the app name). Try app-scoped first, then fall back.
+export async function listTemplates(apiKey: string, appName: string, appId?: string | null): Promise<RemoteTemplate[]> {
+  const errors: string[] = [];
+  let rows: Record<string, unknown>[] | null = null;
+  if (appId) {
+    try {
+      rows = await fetchTemplates(`${BASE}/wa/app/${encodeURIComponent(appId)}/template`, apiKey);
+    } catch (e) {
+      errors.push(`app ID endpoint: ${(e as Error).message}`);
+    }
+  }
+  if (!rows) {
+    try {
+      rows = await fetchTemplates(`${BASE}/sm/api/v1/template/list/${encodeURIComponent(appName)}`, apiKey);
+    } catch (e) {
+      errors.push(`app name endpoint: ${(e as Error).message}`);
+    }
+  }
+  if (!rows) {
+    if (!appId) errors.push("Tip: add the Gupshup app ID in Settings. App-level API keys need it.");
+    throw new Error(errors.join(" | "));
+  }
+  const json = { templates: rows };
   return (json.templates ?? []).map((t) => {
     const container = parseJson(t.containerMeta) ?? {};
     const body = String(container.data ?? t.data ?? "");

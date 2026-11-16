@@ -151,7 +151,7 @@ export async function rotateWebhookAction(form: FormData) {
 
 async function syncTemplatesFor(appId: string): Promise<number> {
   const app = await prisma.app.findUniqueOrThrow({ where: { id: appId } });
-  const remote = await listTemplates(decrypt(app.apiKeyEnc), app.gupshupAppName);
+  const remote = await listTemplates(decrypt(app.apiKeyEnc), app.gupshupAppName, app.gupshupAppId);
   await prisma.$transaction([
     ...remote.map((t) =>
       prisma.template.upsert({
@@ -204,6 +204,6 @@ export async function syncTemplatesAction(_: FormState, form: FormData): Promise
     revalidatePath(`/apps/${app.id}`);
     return { ok: `Synced ${n} template${n === 1 ? "" : "s"} from Gupshup.` };
   } catch (e) {
-    return { error: `Could not fetch templates. Check the API key and Gupshup app name. (${(e as Error).message})` };
+    return { error: `Could not fetch templates. Check the API key, app ID and app name. (${(e as Error).message})` };
   }
 }
