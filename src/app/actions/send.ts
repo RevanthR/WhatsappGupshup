@@ -27,8 +27,9 @@ export async function sendSingleAction(_: SendState, form: FormData): Promise<Se
     params.push(v);
   }
   const mediaUrl = String(form.get("mediaUrl") ?? "").trim();
-  if (needsMedia(template) && !/^https?:\/\//.test(mediaUrl)) {
-    return { error: `This template needs a public ${template.templateType.toLowerCase()} URL.` };
+  if (mediaUrl && !/^https?:\/\//.test(mediaUrl)) return { error: "Media URL must start with http:// or https://" };
+  if (needsMedia(template) && !mediaUrl && !template.sampleMediaUrl) {
+    return { error: `This template has no ${template.templateType.toLowerCase()} saved in Gupshup. Add a public URL.` };
   }
 
   const msg = await sendTemplateNow({ app, template, phone, params, mediaUrl, userId: user.id });

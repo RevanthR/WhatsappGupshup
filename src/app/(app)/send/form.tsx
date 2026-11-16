@@ -79,9 +79,24 @@ export function SendForm({ apps, initialAppId, initialPhone }: { apps: AppOpt[];
 
           {needsMedia ? (
             <div>
-              <label className="label" htmlFor="mediaUrl">{template!.templateType.toLowerCase()} URL</label>
-              <input id="mediaUrl" name="mediaUrl" type="url" required className="input" placeholder="https://..." value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} />
-              <p className="hint">Must be a public link WhatsApp can download.</p>
+              <label className="label" htmlFor="mediaUrl">
+                {template!.templateType.toLowerCase()} URL {template!.sampleMediaUrl ? "(optional)" : ""}
+              </label>
+              <input
+                id="mediaUrl"
+                name="mediaUrl"
+                type="url"
+                required={!template!.sampleMediaUrl}
+                className="input"
+                placeholder={template!.sampleMediaUrl ? "Leave blank to use the one saved in Gupshup" : "https://..."}
+                value={mediaUrl}
+                onChange={(e) => setMediaUrl(e.target.value)}
+              />
+              <p className="hint">
+                {template!.sampleMediaUrl
+                  ? `Uses the ${template!.templateType.toLowerCase()} uploaded with this template in Gupshup. Paste a public link only to send a different one.`
+                  : "Must be a public link WhatsApp can download."}
+              </p>
             </div>
           ) : null}
 

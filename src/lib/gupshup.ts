@@ -93,6 +93,7 @@ export type RemoteTemplate = {
   footer: string | null;
   buttons: unknown;
   paramCount: number;
+  sampleMediaUrl: string | null;
   raw: unknown;
 };
 
@@ -155,6 +156,9 @@ export async function listTemplates(apiKey: string, appName: string, appId?: str
     const body = String(container.data ?? t.data ?? "");
     const header = typeof container.header === "string" ? container.header : null;
     const footer = typeof container.footer === "string" ? container.footer : null;
+    const meta = parseJson(t.meta) ?? {};
+    const sampleMediaUrl =
+      typeof meta.mediaUrl === "string" && /^https?:\/\//.test(meta.mediaUrl) ? meta.mediaUrl : null;
     return {
       id: String(t.id),
       elementName: String(t.elementName ?? t.id),
@@ -168,6 +172,7 @@ export async function listTemplates(apiKey: string, appName: string, appId?: str
       buttons: container.buttons ?? null,
       // Text header variables come first, then body variables.
       paramCount: maxVar(header) + maxVar(body),
+      sampleMediaUrl,
       raw: t,
     };
   });

@@ -13,8 +13,15 @@ export const MEDIA_TYPES = ["IMAGE", "VIDEO", "DOCUMENT"] as const;
 export const needsMedia = (t: Pick<Template, "templateType">) =>
   (MEDIA_TYPES as readonly string[]).includes(t.templateType);
 
-export function mediaHeader(t: Pick<Template, "templateType">, url?: string | null, filename?: string | null): MediaHeader | undefined {
-  if (!needsMedia(t) || !url) return undefined;
+// Uses the row's URL, else the media uploaded with the template in Gupshup.
+export function mediaHeader(
+  t: Pick<Template, "templateType" | "sampleMediaUrl">,
+  url?: string | null,
+  filename?: string | null,
+): MediaHeader | undefined {
+  if (!needsMedia(t)) return undefined;
+  url = url || t.sampleMediaUrl;
+  if (!url) return undefined;
   return { type: t.templateType.toLowerCase() as MediaHeader["type"], url, filename: filename ?? undefined };
 }
 

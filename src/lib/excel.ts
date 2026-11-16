@@ -4,7 +4,9 @@ import { varLabels } from "@/lib/template-vars";
 import { normalizePhone } from "@/lib/phone";
 import type { Template } from "@/generated/prisma/client";
 
-type Tpl = Pick<Template, "elementName" | "body" | "header" | "footer" | "templateType" | "paramCount">;
+type Tpl = Pick<Template, "elementName" | "body" | "header" | "footer" | "templateType" | "paramCount"> & {
+  sampleMediaUrl?: string | null;
+};
 
 export function columnsFor(t: Tpl): string[] {
   const media = ["IMAGE", "VIDEO", "DOCUMENT"].includes(t.templateType);
@@ -21,7 +23,7 @@ export async function buildTemplateWorkbook(t: Tpl): Promise<Buffer> {
   ws.views = [{ state: "frozen", ySplit: 1 }];
   // Phone column as text so Excel does not mangle long numbers.
   ws.getColumn(1).numFmt = "@";
-  ws.addRow(Object.fromEntries(cols.map((c) => [c, c === "phone" ? "919876543210" : c === "media_url" ? "https://example.com/file.jpg" : `sample ${c}`])));
+  ws.addRow(Object.fromEntries(cols.map((c) => [c, c === "phone" ? "919876543210" : c === "media_url" ? (t.sampleMediaUrl ? "" : "https://example.com/file.jpg") : `sample ${c}`])));
 
   const info = wb.addWorksheet("How to fill");
   info.getColumn(1).width = 100;
@@ -30,7 +32,13 @@ export async function buildTemplateWorkbook(t: Tpl): Promise<Buffer> {
     "",
     "1. Fill one row per recipient on the Recipients sheet. Delete the sample row.",
     "2. phone: number with country code, e.g. 919876543210 or +91 98765 43210. 10-digit numbers are treated as Indian.",
-    ...(cols.includes("media_url") ? [`3. media_url: public link to the ${t.templateType.toLowerCase()} for this row.`] : []),
+    ...(cols.includes("media_url")
+      ? [
+          t.sampleMediaUrl
+            ? `3. media_url: optional. Leave blank to send the ${t.templateType.toLowerCase()} saved with this template in Gupshup, or paste a public link to send a different one for that row.`
+            : `3. media_url: public link to the ${t.templateType.toLowerCase()} for this row.`,
+        ]
+      : []),
     "Variables fill the placeholders in order:",
     ...varLabels(t).map((l) => `   ${l}`),
     "",
@@ -73,6 +81,7 @@ export async function parseRecipients(file: ArrayBuffer, t: Tpl, maxRows = 50_00
   const index: Record<string, number> = {};
   for (const col of expected) {
     const i = header.indexOf(col);
+    if (i === -1 && col === "media_url" && t.sampleMediaUrl) continue;
     if (i === -1) throw new Error(`Column "${col}" is missing. Download the Excel template for this template and use it as is.`);
     index[col] = i + 1;
   }
@@ -85,7 +94,7 @@ export async function parseRecipients(file: ArrayBuffer, t: Tpl, maxRows = 50_00
 
   ws.eachRow({ includeEmpty: false }, (row, n) => {
     if (n === 1) return;
-    const get = (col: string) => cellText(row.getCell(index[col]).value);
+    const get = (col: string) => (index[col] ? cellText(row.getCell(index[col]).value) : "");
     const rawPhone = get("phone");
     const values = expected.map(get);
     if (values.every((v) => !v)) return;
@@ -101,8 +110,9 @@ export async function parseRecipients(file: ArrayBuffer, t: Tpl, maxRows = 50_00
     if (missing.length) return void bad.push({ row: n, raw: rawPhone, reason: `Empty: ${missing.join(", ")}` });
     let mediaUrl: string | null = null;
     if (index.media_url) {
-      mediaUrl = get("media_url");
-      if (!/^https?:\/\/\S+$/.test(mediaUrl)) return void bad.push({ row: n, raw: rawPhone, reason: "media_url must be a public http(s) link" });
+      mediaUrl = get("media_url") || null;
+      if (mediaUrl && !/^https?:\/\/\S+$/.test(mediaUrl)) return void bad.push({ row: n, raw: rawPhone, reason: "media_url must be a public http(s) link" });
+      if (!mediaUrl && !t.sampleMediaUrl) return void bad.push({ row: n, raw: rawPhone, reason: "media_url is required (no media saved with this template)" });
     }
     seen.set(phone, n);
     good.push({ row: n, phone, params, mediaUrl });

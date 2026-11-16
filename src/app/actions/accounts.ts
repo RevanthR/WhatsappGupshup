@@ -169,6 +169,7 @@ async function syncTemplatesFor(appId: string): Promise<number> {
           footer: t.footer,
           buttons: (t.buttons as object) ?? undefined,
           paramCount: t.paramCount,
+          sampleMediaUrl: t.sampleMediaUrl,
           raw: t.raw as object,
         },
         update: {
@@ -182,6 +183,7 @@ async function syncTemplatesFor(appId: string): Promise<number> {
           footer: t.footer,
           buttons: (t.buttons as object) ?? undefined,
           paramCount: t.paramCount,
+          sampleMediaUrl: t.sampleMediaUrl,
           raw: t.raw as object,
         },
       }),

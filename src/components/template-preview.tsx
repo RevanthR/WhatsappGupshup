@@ -5,6 +5,7 @@ export type PreviewTemplate = {
   header: string | null;
   footer: string | null;
   templateType: string;
+  sampleMediaUrl?: string | null;
 };
 
 function fill(text: string, params: string[]) {
@@ -23,6 +24,7 @@ function fill(text: string, params: string[]) {
 
 export function TemplatePreview({ template, params, mediaUrl }: { template: PreviewTemplate; params: string[]; mediaUrl?: string }) {
   const split = splitParams(template, params);
+  mediaUrl = mediaUrl || template.sampleMediaUrl || undefined;
   const media = ["IMAGE", "VIDEO", "DOCUMENT"].includes(template.templateType);
   return (
     <div className="rounded-xl bg-[#efeae2] p-4">

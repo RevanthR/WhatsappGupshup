@@ -17,7 +17,7 @@ export default async function BulkPage({ searchParams }: PageProps<"/bulk">) {
       account: { select: { name: true } },
       templates: {
         where: { status: "APPROVED" },
-        select: { id: true, elementName: true, body: true, header: true, footer: true, templateType: true, paramCount: true, languageCode: true },
+        select: { id: true, elementName: true, body: true, header: true, footer: true, templateType: true, paramCount: true, languageCode: true, sampleMediaUrl: true },
         orderBy: { elementName: "asc" },
       },
     },

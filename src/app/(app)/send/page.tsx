@@ -17,7 +17,7 @@ export default async function SendPage({ searchParams }: PageProps<"/send">) {
       account: { select: { name: true } },
       templates: {
         where: { status: "APPROVED" },
-        select: { id: true, elementName: true, body: true, header: true, footer: true, templateType: true, paramCount: true, languageCode: true },
+        select: { id: true, elementName: true, body: true, header: true, footer: true, templateType: true, paramCount: true, languageCode: true, sampleMediaUrl: true },
         orderBy: { elementName: "asc" },
       },
     },

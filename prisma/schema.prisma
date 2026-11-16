@@ -117,6 +117,7 @@ model Template {
   footer       String?
   buttons      Json?
   paramCount   Int      @default(0)
+  sampleMediaUrl String? // header media uploaded with the template in Gupshup, used when no URL is given
   raw          Json?
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
