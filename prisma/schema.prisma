@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  USER
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum MessageStatus {
+  QUEUED
+  SENDING
+  SUBMITTED
+  ENQUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RECEIVED
+}
+
+enum CampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  name               String
+  email              String   @unique
+  passwordHash       String
+  role               Role     @default(USER)
+  active             Boolean  @default(true)
+  mustChangePassword Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  accounts     AccountAccess[]
+  ownedAccounts GupshupAccount[] @relation("AccountOwner")
+  campaigns    Campaign[]
+  messages     Message[]
+}
+
+// A Gupshup login (one business / client). Holds one or more WhatsApp apps.
+model GupshupAccount {
+  id        String   @id @default(cuid())
+  name      String
+  notes     String?
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner  User            @relation("AccountOwner", fields: [ownerId], references: [id])
+  access AccountAccess[]
+  apps   App[]
+}
+
+// Which users can use which accounts. Super admins see everything without a row here.
+model AccountAccess {
+  userId    String
+  accountId String
+  createdAt DateTime @default(now())
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account GupshupAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([userId, accountId])
+}
+
+model App {
+  id              String    @id @default(cuid())
+  accountId       String
+  name            String // display name
+  gupshupAppName  String // "src.name" in Gupshup API calls
+  gupshupAppId    String?
+  sourceNumber    String // registered WhatsApp number, digits with country code
+  apiKeyEnc       String // AES-256-GCM encrypted
+  apiKeyLast4     String
+  webhookToken    String    @unique
+  lastWebhookAt   DateTime?
+  templatesSyncedAt DateTime?
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  account   GupshupAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  templates Template[]
+  campaigns Campaign[]
+  messages  Message[]
+  contacts  Contact[]
+}
+
+model Template {
+  id           String   @id @default(cuid())
+  appId        String
+  gupshupId    String
+  elementName  String
+  languageCode String
+  category     String?
+  status       String // APPROVED, PENDING, REJECTED...
+  templateType String // TEXT, IMAGE, VIDEO, DOCUMENT, LOCATION
+  body         String
+  header       String?
+  footer       String?
+  buttons      Json?
+  paramCount   Int      @default(0)
+  raw          Json?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  app       App        @relation(fields: [appId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+  messages  Message[]
+
+  @@unique([appId, gupshupId])
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  name        String
+  appId       String
+  templateId  String
+  createdById String
+  status      CampaignStatus @default(DRAFT)
+  total       Int            @default(0)
+  fileName    String?
+  skippedRows Json?
+  lastTickAt  DateTime?
+  leaseUntil  DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  app       App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  template  Template @relation(fields: [templateId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+  messages  Message[]
+
+  @@index([status])
+}
+
+// A customer number per app. Used for the inbox (conversation list).
+model Contact {
+  id              String    @id @default(cuid())
+  appId           String
+  phone           String
+  name            String?
+  lastMessageAt   DateTime?
+  lastInboundAt   DateTime?
+  lastPreview     String?
+  unreadCount     Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  app      App       @relation(fields: [appId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([appId, phone])
+  @@index([appId, lastMessageAt])
+}
+
+model Message {
+  id                String           @id @default(cuid())
+  appId             String
+  contactId         String?
+  campaignId        String?
+  templateId        String?
+  sentById          String?
+  direction         MessageDirection
+  phone             String
+  status            MessageStatus
+  type              String           @default("template") // template, text, image, document...
+  params            Json?
+  mediaUrl          String?
+  text              String?
+  gupshupMessageId  String?          @unique
+  whatsappMessageId String?
+  error             String?
+  rowNumber         Int?
+  attempts          Int              @default(0)
+  submittedAt       DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  app      App       @relation(fields: [appId], references: [id], onDelete: Cascade)
+  contact  Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  template Template? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  sentBy   User?     @relation(fields: [sentById], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, status])
+  @@index([contactId, createdAt])
+  @@index([appId, createdAt])
+  @@index([whatsappMessageId])
+}
+
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+}
