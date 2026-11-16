@@ -12,3 +12,5 @@ WhatsApp bulk and single sender on Gupshup, with a multi-user admin. See README.
 - Never change `ENCRYPTION_KEY` once API keys are stored.
 - Custom CSS classes (`btn-primary`, `card`, `input`...) are Tailwind v4 `@utility` blocks in `globals.css`.
 - No em dashes anywhere.
+- UI wording: a Gupshup account is a "business", a Gupshup app is a "WhatsApp number" (`/numbers`). Model names stay `GupshupAccount` / `App`.
+- Gupshup keys are always tested before saving (`verifyConnectionAction`, `createNumberAction`, `updateAppAction`). Friendly error text lives in `src/lib/errors.ts`.
