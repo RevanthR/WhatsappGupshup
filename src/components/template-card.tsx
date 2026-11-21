@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui";
 import { TemplatePreview } from "@/components/template-preview";
 import { varLabels } from "@/lib/template-vars";
+import { categoryLabel, typeLabel } from "@/lib/template-label";
 
 type T = {
   id: string;
@@ -40,8 +41,8 @@ export function TemplateCard({ t, numberName }: { t: T; numberName?: string }) {
           <p className="truncate font-mono text-sm font-semibold text-gray-900" title={t.elementName}>{t.elementName}</p>
           <p className="mt-0.5 text-xs text-gray-500">
             {numberName ? `${numberName} · ` : ""}
-            {t.category ? t.category.charAt(0) + t.category.slice(1).toLowerCase() : "Template"} · {t.languageCode}
-            {t.templateType !== "TEXT" ? ` · ${t.templateType.toLowerCase()}` : ""}
+            <span className="font-medium text-gray-700">{typeLabel(t.templateType)}</span>
+            {t.category ? ` · ${categoryLabel(t.category)}` : ""} · {t.languageCode}
           </p>
         </div>
         <span title={STATUS_HELP[t.status] ?? t.status}>

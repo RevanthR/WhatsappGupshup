@@ -7,8 +7,10 @@ import { Spinner } from "@/components/toast";
 import { useResultToast } from "@/components/action-form";
 import { TemplatePreview, type PreviewTemplate } from "@/components/template-preview";
 import { varLabels } from "@/lib/template-vars";
+import { templateOption } from "@/lib/template-label";
+import { TemplateTypeInfo } from "@/components/template-type";
 
-type Tpl = PreviewTemplate & { id: string; elementName: string; languageCode: string; paramCount: number };
+type Tpl = PreviewTemplate & { id: string; elementName: string; languageCode: string; paramCount: number; category: string | null };
 type AppOpt = { id: string; name: string; account: { name: string }; templates: Tpl[] };
 
 export function SendForm({ apps, initialAppId, initialPhone, initialTemplateId }: { apps: AppOpt[]; initialAppId?: string; initialPhone?: string; initialTemplateId?: string }) {
@@ -67,9 +69,10 @@ export function SendForm({ apps, initialAppId, initialPhone, initialTemplateId }
               >
                 {app.templates.length === 0 ? <option value="">No approved templates</option> : null}
                 {app.templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.elementName} ({t.languageCode})</option>
+                  <option key={t.id} value={t.id}>{templateOption(t)}</option>
                 ))}
               </select>
+                {template ? <TemplateTypeInfo t={template} mode="single" /> : null}
             </div>
           </div>
 

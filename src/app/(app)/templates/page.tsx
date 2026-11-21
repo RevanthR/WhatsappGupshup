@@ -17,12 +17,14 @@ export default async function TemplatesPage({ searchParams }: PageProps<"/templa
   const appId = str("app");
   const show = str("show") || "approved";
   const q = str("q").trim();
+  const type = ["TEXT", "IMAGE", "VIDEO", "DOCUMENT"].includes(str("type")) ? str("type") : "";
 
   const apps = await prisma.app.findMany({ where: appWhere(user), select: { id: true, name: true }, orderBy: { name: "asc" } });
   const where: Prisma.TemplateWhereInput = {
     app: appWhere(user),
     status: show === "approved" ? "APPROVED" : { notIn: ["DELETED"] },
     ...(appId ? { appId } : {}),
+    ...(type ? { templateType: type } : {}),
     ...(q ? { OR: [{ elementName: { contains: q, mode: "insensitive" } }, { body: { contains: q, mode: "insensitive" } }] } : {}),
   };
   const [templates, counts] = await Promise.all([
@@ -37,7 +39,7 @@ export default async function TemplatesPage({ searchParams }: PageProps<"/templa
   const approvedCount = counts.find((c) => c.status === "APPROVED")?._count ?? 0;
   const allCount = counts.reduce((n, c) => n + c._count, 0);
   const link = (o: Record<string, string>) => {
-    const p = new URLSearchParams({ ...(appId ? { app: appId } : {}), ...(q ? { q } : {}), show, ...o });
+    const p = new URLSearchParams({ ...(appId ? { app: appId } : {}), ...(q ? { q } : {}), ...(type ? { type } : {}), show, ...o });
     for (const [k, v] of [...p.entries()]) if (!v) p.delete(k);
     return `?${p.toString()}`;
   };
@@ -77,7 +79,7 @@ export default async function TemplatesPage({ searchParams }: PageProps<"/templa
               <Link href={link({ show: "approved" })} className={`rounded-full px-3 py-1 ${show === "approved" ? "bg-brand-600 text-white" : "bg-white text-gray-700 ring-1 ring-gray-200"}`}>Ready to send ({approvedCount})</Link>
               <Link href={link({ show: "all" })} className={`rounded-full px-3 py-1 ${show === "all" ? "bg-brand-600 text-white" : "bg-white text-gray-700 ring-1 ring-gray-200"}`}>All ({allCount})</Link>
             </div>
-            <form className="flex gap-2" action="/templates">
+            <form className="flex flex-wrap gap-2 sm:flex-nowrap" action="/templates">
               <input type="hidden" name="show" value={show} />
               {apps.length > 1 ? (
                 <select name="app" defaultValue={appId} className="input w-40">
@@ -85,6 +87,13 @@ export default async function TemplatesPage({ searchParams }: PageProps<"/templa
                   {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               ) : null}
+              <select name="type" defaultValue={type} className="input w-32">
+                <option value="">Any type</option>
+                <option value="TEXT">Text</option>
+                <option value="IMAGE">Image</option>
+                <option value="VIDEO">Video</option>
+                <option value="DOCUMENT">Document</option>
+              </select>
               <input name="q" defaultValue={q} placeholder="Search templates" className="input w-full sm:w-56" />
               <button className="btn-secondary">Go</button>
             </form>

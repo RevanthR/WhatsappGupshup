@@ -4,12 +4,27 @@ import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
 import { formatPhone } from "@/lib/phone";
 import { Badge, Card, Empty, fmtDate, PageHeader, TableWrap } from "@/components/ui";
+import { DeliveryStats } from "@/components/delivery-stats";
 import type { Prisma, MessageStatus } from "@/generated/prisma/client";
 
 export const metadata = { title: "Message log" };
 
 const PAGE = 50;
-const STATUSES = ["SUBMITTED", "SENT", "DELIVERED", "READ", "FAILED", "RECEIVED", "QUEUED"];
+// Status filters. Some group several raw statuses.
+const STATUS_FILTERS: Record<string, { label: string; in: MessageStatus[] }> = {
+  DELIVERED: { label: "Delivered (incl. read)", in: ["DELIVERED", "READ"] },
+  READ: { label: "Read", in: ["READ"] },
+  WAITING: { label: "Not delivered yet", in: ["SUBMITTED", "ENQUEUED", "SENT"] },
+  FAILED: { label: "Failed", in: ["FAILED"] },
+  QUEUED: { label: "In queue", in: ["QUEUED", "SENDING"] },
+  RECEIVED: { label: "Received", in: ["RECEIVED"] },
+};
+const RANGES: Record<string, { label: string; ms: number }> = {
+  "24h": { label: "Last 24 hours", ms: 864e5 },
+  "7d": { label: "Last 7 days", ms: 7 * 864e5 },
+  "30d": { label: "Last 30 days", ms: 30 * 864e5 },
+};
+const sinceFor = (range: string) => (RANGES[range] ? new Date(Date.now() - RANGES[range].ms) : null);
 
 export default async function MessagesPage({ searchParams }: PageProps<"/messages">) {
   const sp = await searchParams;
@@ -20,14 +35,27 @@ export default async function MessagesPage({ searchParams }: PageProps<"/message
   const status = str("status");
   const dir = str("dir");
   const q = str("q").replace(/\D/g, "");
+  const range = RANGES[str("range")] ? str("range") : "";
   const page = Math.max(1, Number(str("page")) || 1);
+  const since = sinceFor(range);
 
-  const where: Prisma.MessageWhereInput = {
+  // Everything except status and direction, shared by the list and the metrics.
+  const base: Prisma.MessageWhereInput = {
     app: appWhere(user),
     ...(app ? { appId: app } : {}),
-    ...(STATUSES.includes(status) ? { status: status as MessageStatus } : {}),
-    ...(dir === "in" ? { direction: "INBOUND" } : dir === "out" ? { direction: "OUTBOUND" } : {}),
     ...(q ? { phone: { contains: q } } : {}),
+    ...(since ? { createdAt: { gte: since } } : {}),
+  };
+  const dirWhere: Prisma.MessageWhereInput =
+    dir === "in" ? { direction: "INBOUND" }
+    : dir === "out" ? { direction: "OUTBOUND" }
+    : dir === "bulk" ? { direction: "OUTBOUND", campaignId: { not: null } }
+    : dir === "single" ? { direction: "OUTBOUND", campaignId: null }
+    : {};
+  const where: Prisma.MessageWhereInput = {
+    ...base,
+    ...dirWhere,
+    ...(STATUS_FILTERS[status] ? { status: { in: STATUS_FILTERS[status].in } } : {}),
   };
   const [rows, count] = await Promise.all([
     prisma.message.findMany({
@@ -46,30 +74,43 @@ export default async function MessagesPage({ searchParams }: PageProps<"/message
   ]);
   const pages = Math.max(1, Math.ceil(count / PAGE));
   const qs = (o: Record<string, string | number>) => {
-    const p = new URLSearchParams({ ...(app ? { app } : {}), ...(status ? { status } : {}), ...(dir ? { dir } : {}), ...(q ? { q } : {}) });
-    for (const [k, v] of Object.entries(o)) p.set(k, String(v));
+    const p = new URLSearchParams({ ...(app ? { app } : {}), ...(status ? { status } : {}), ...(dir ? { dir } : {}), ...(q ? { q } : {}), ...(range ? { range } : {}) });
+    for (const [k, v] of Object.entries(o)) if (v === "") p.delete(k); else p.set(k, String(v));
     return `?${p.toString()}`;
   };
 
   return (
     <>
       <PageHeader title="Message log" description={`${count.toLocaleString("en-IN")} message${count === 1 ? "" : "s"}`} />
-      <form className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" action="/messages">
+      {dir !== "in" ? (
+        <DeliveryStats
+          where={{ ...base, ...(dir === "out" || dir === "" ? {} : dirWhere) }}
+          repliesWhere={dir === "" ? base : undefined}
+          link={(k) => (k === "REPLIES" ? qs({ dir: "in", status: "", page: "" }) : qs({ status: k, dir: dir || "out", page: "" }))}
+        />
+      ) : null}
+      <form className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7" action="/messages">
         <select name="app" defaultValue={app} className="input">
           <option value="">All numbers</option>
           {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <select name="status" defaultValue={status} className="input">
           <option value="">Any status</option>
-          {STATUSES.map((s) => <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
+          {Object.entries(STATUS_FILTERS).map(([k, f]) => <option key={k} value={k}>{f.label}</option>)}
+        </select>
+        <select name="range" defaultValue={range} className="input">
+          <option value="">All time</option>
+          {Object.entries(RANGES).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
         </select>
         <select name="dir" defaultValue={dir} className="input">
           <option value="">Sent and received</option>
           <option value="out">Sent only</option>
+          <option value="bulk">Bulk sends only</option>
+          <option value="single">Single sends only</option>
           <option value="in">Received only</option>
         </select>
         <input name="q" defaultValue={q} placeholder="Phone contains" className="input" inputMode="tel" />
-        <button className="btn-secondary col-span-2 sm:col-span-1">Filter</button>
+        <button className="btn-secondary sm:col-span-1">Filter</button>
       </form>
 
       {rows.length === 0 ? (
