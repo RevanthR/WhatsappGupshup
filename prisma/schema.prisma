@@ -214,6 +214,7 @@ model Message {
   @@index([campaignId, status])
   @@index([contactId, createdAt])
   @@index([appId, createdAt])
+  @@index([appId, phone])
   @@index([whatsappMessageId])
 }
 

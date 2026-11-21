@@ -24,6 +24,7 @@ const META: Record<string, string> = {
   "132016": "Template is disabled by Meta for low quality.",
   "130472": "Meta held this marketing message back as part of an experiment. Not your fault.",
   "130429": "WhatsApp rate limit reached. Sending will slow down.",
+  "429": "Sent faster than this WhatsApp number allows. WA Sender now slows down and retries these on its own.",
   "470": "More than 24 hours since this person last messaged you. Only templates can be sent now.",
   "1013": "This number is not on WhatsApp.",
 };
@@ -40,8 +41,13 @@ const GUPSHUP: [RegExp, string][] = [
 
 export function friendlyError(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const code = raw.match(/\b(1[0-9]{3,5}|470)\b/)?.[1];
+  const code = raw.match(/\b(1[0-9]{3,5}|470|429)\b/)?.[1];
   if (code && META[code]) return META[code];
   for (const [re, text] of GUPSHUP) if (re.test(raw)) return text;
   return null;
+}
+
+// WhatsApp or Gupshup throughput limits. Safe to send again after a pause.
+export function isRateLimitError(raw: string | null | undefined): boolean {
+  return !!raw && /(^|\D)(429|130429)(\D|$)/.test(raw);
 }

@@ -1,14 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Tone = "success" | "error" | "info";
-type Toast = { id: number; tone: Tone; text: string };
+type Tone = "success" | "error" | "info" | "reply";
+type Extra = { title?: string; href?: string; ms?: number };
+type Toast = { id: number; tone: Tone; text: string } & Extra;
 
 // Fire from any client component: toast("Saved", "success").
-export function toast(text: string, tone: Tone = "info") {
+// Optional title and link turn it into a clickable notification.
+export function toast(text: string, tone: Tone = "info", extra: Extra = {}) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent("app:toast", { detail: { text, tone } }));
+  window.dispatchEvent(new CustomEvent("app:toast", { detail: { text, tone, ...extra } }));
 }
 
 export function Toaster() {
@@ -16,10 +19,10 @@ export function Toaster() {
   useEffect(() => {
     let n = 0;
     const onToast = (e: Event) => {
-      const { text, tone } = (e as CustomEvent<{ text: string; tone: Tone }>).detail;
+      const d = (e as CustomEvent<Omit<Toast, "id">>).detail;
       const id = ++n;
-      setItems((s) => [...s.slice(-3), { id, text, tone }]);
-      setTimeout(() => setItems((s) => s.filter((t) => t.id !== id)), tone === "error" ? 8000 : 4000);
+      setItems((s) => [...s.slice(-3), { id, ...d }]);
+      setTimeout(() => setItems((s) => s.filter((t) => t.id !== id)), d.ms ?? (d.tone === "error" ? 8000 : d.tone === "reply" ? 9000 : 4000));
     };
     window.addEventListener("app:toast", onToast);
     return () => window.removeEventListener("app:toast", onToast);
@@ -31,11 +34,21 @@ export function Toaster() {
           key={t.id}
           role="status"
           className={`toast-in pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-lg px-4 py-3 text-sm text-white shadow-lg ${
-            t.tone === "success" ? "bg-emerald-600" : t.tone === "error" ? "bg-red-600" : "bg-gray-900"
+            t.tone === "success" ? "bg-emerald-600" : t.tone === "error" ? "bg-red-600" : t.tone === "reply" ? "bg-violet-700" : "bg-gray-900"
           }`}
         >
-          <span className="mt-0.5 shrink-0">{t.tone === "success" ? "✓" : t.tone === "error" ? "!" : "i"}</span>
-          <span className="flex-1">{t.text}</span>
+          <span className="mt-0.5 shrink-0">{t.tone === "success" ? "✓" : t.tone === "error" ? "!" : t.tone === "reply" ? "💬" : "i"}</span>
+          {t.href ? (
+            <Link href={t.href} className="min-w-0 flex-1" onClick={() => setItems((s) => s.filter((x) => x.id !== t.id))}>
+              {t.title ? <span className="block font-semibold">{t.title}</span> : null}
+              <span className="line-clamp-2 block opacity-90">{t.text}</span>
+            </Link>
+          ) : (
+            <span className="min-w-0 flex-1">
+              {t.title ? <span className="block font-semibold">{t.title}</span> : null}
+              {t.text}
+            </span>
+          )}
           <button className="shrink-0 opacity-70 hover:opacity-100" aria-label="Dismiss" onClick={() => setItems((s) => s.filter((x) => x.id !== t.id))}>
             ×
           </button>

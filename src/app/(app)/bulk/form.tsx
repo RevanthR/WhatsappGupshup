@@ -112,6 +112,14 @@ export function BulkForm({ apps, initialAppId, initialTemplateId }: { apps: AppO
                 />
                 <p className="hint">Up to 4 MB (about 50,000 rows). Nothing is sent yet. You review the rows first.</p>
               </div>
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input type="checkbox" name="skipKnownBad" defaultChecked className="mt-0.5 h-4 w-4 accent-brand-600" />
+                <span>
+                  Skip numbers that earlier sends showed are not on WhatsApp
+                  {template?.category === "MARKETING" ? ", or that stopped your marketing messages" : ""}.
+                  <span className="block text-xs text-gray-500">Saves money and keeps your number&apos;s quality up. Duplicates are always removed.</span>
+                </span>
+              </label>
               {state?.error ? <Alert tone="error">{state.error}</Alert> : null}
               {state?.bad?.length ? <BadRows rows={state.bad} /> : null}
               <button className="btn-primary w-full sm:w-auto" disabled={pending || !template}>

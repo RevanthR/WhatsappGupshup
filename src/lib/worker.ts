@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { credsFor, mediaHeader } from "@/lib/send";
 import { renderPreviewText } from "@/lib/template-vars";
 import { sendTemplate } from "@/lib/gupshup";
+import { isRateLimitError } from "@/lib/errors";
 import type { Prisma } from "@/generated/prisma/client";
 
 // Bulk sending runs in short chained invocations ("the app calls itself").
@@ -15,6 +16,12 @@ const LEASE_MS = 70_000;
 const BATCH = 25;
 const CONCURRENCY = 8;
 const MAX_ATTEMPTS = 3;
+// Rate-limited messages get a few more tries than other errors.
+export const RATE_LIMIT_MAX_ATTEMPTS = 5;
+// Messages per second per campaign run. WhatsApp answers 429 when a number is sent to too fast.
+const SEND_RATE = Number(process.env.WORKER_SEND_RATE) || 15;
+// A message that is retried waits at least this long before it is picked up again.
+const RETRY_DELAY_S = 30;
 export const STALL_MS = 2 * 60 * 1000;
 
 function secret(): string {
@@ -67,16 +74,65 @@ type Claimed = { id: string; phone: string; params: Prisma.JsonValue; mediaUrl: 
 
 async function claimBatch(campaignId: string): Promise<Claimed[]> {
   return prisma.$queryRaw<Claimed[]>`
-    UPDATE "Message" SET status = 'SENDING', attempts = attempts + 1, "updatedAt" = now()
+    UPDATE "Message" SET status = 'SENDING', attempts = attempts + 1, "updatedAt" = (now() AT TIME ZONE 'UTC')
     WHERE id IN (
       SELECT id FROM "Message"
       WHERE "campaignId" = ${campaignId} AND status = 'QUEUED'
+        AND (attempts = 0 OR "updatedAt" < (now() AT TIME ZONE 'UTC') - make_interval(secs => ${RETRY_DELAY_S}))
       ORDER BY "rowNumber" ASC NULLS LAST, "createdAt" ASC
       LIMIT ${BATCH}
       FOR UPDATE SKIP LOCKED
     )
     RETURNING id, phone, params, "mediaUrl", attempts`;
 }
+
+// Spaces out sends to a steady rate. Halves the rate when WhatsApp says slow down.
+function pacer(perSecond: number) {
+  let gap = 1000 / perSecond;
+  let next = Date.now();
+  return {
+    async wait() {
+      const now = Date.now();
+      const at = Math.max(now, next);
+      next = at + gap;
+      if (at > now) await new Promise((r) => setTimeout(r, at - now));
+    },
+    slowDown() {
+      gap = Math.min(gap * 2, 2000);
+    },
+  };
+}
+
+// Puts rate-limited failures back in the queue so the worker sends them again.
+// Works on messages that failed, or that WhatsApp is about to report as failed.
+export async function requeueRateLimited(where: Prisma.MessageWhereInput): Promise<number> {
+  const res = await prisma.message.updateMany({
+    where: { AND: [where, { status: { in: ["FAILED", "SUBMITTED", "ENQUEUED", "SENT"] } }] },
+    data: {
+      status: "QUEUED",
+      gupshupMessageId: null,
+      whatsappMessageId: null,
+      submittedAt: null,
+      sentAt: null,
+      failedAt: null,
+      error: "Rate limited by WhatsApp. Retrying.",
+    },
+  });
+  return res.count;
+}
+
+// Reopens a finished campaign that got messages back in its queue.
+// Returns true when it is running and no worker holds it, so it needs a kick.
+export async function reopenCampaign(campaignId: string): Promise<boolean> {
+  await prisma.campaign.updateMany({ where: { id: campaignId, status: "COMPLETED" }, data: { status: "RUNNING", completedAt: null } });
+  const c = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { status: true, leaseUntil: true } });
+  return c?.status === "RUNNING" && (!c.leaseUntil || c.leaseUntil.getTime() < Date.now());
+}
+
+// Prisma filter for failures caused by rate limits.
+export const RATE_LIMITED: Prisma.MessageWhereInput = {
+  OR: [{ error: { startsWith: "429" } }, { error: { contains: "#429" } }, { error: { contains: "130429" } }, { error: { startsWith: "Gupshup 429" } }],
+};
 
 async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>) {
   let i = 0;
@@ -100,6 +156,7 @@ export async function runCampaign(campaignId: string): Promise<"more" | "done" |
       include: { app: true, template: true },
     });
     const creds = credsFor(campaign.app);
+    const pace = pacer(SEND_RATE);
 
     // Anything stuck in SENDING from a crashed run has an unknown outcome.
     // Mark it failed rather than risk sending the same message twice.
@@ -113,10 +170,18 @@ export async function runCampaign(campaignId: string): Promise<"more" | "done" |
       if (current?.status !== "RUNNING") return "stopped";
 
       const batch = await claimBatch(campaignId);
-      if (batch.length === 0) break;
+      if (batch.length === 0) {
+        // Retries may be waiting out their delay. Wait here instead of ending the run.
+        const waiting = await prisma.message.count({ where: { campaignId, status: "QUEUED" } });
+        if (!waiting || Date.now() - started > RUN_BUDGET_MS - 6_000) break;
+        await new Promise((r) => setTimeout(r, 5_000));
+        await prisma.campaign.update({ where: { id: campaignId }, data: { lastTickAt: new Date(), leaseUntil: new Date(Date.now() + LEASE_MS) } });
+        continue;
+      }
 
       await pool(batch, CONCURRENCY, async (m) => {
         const params = Array.isArray(m.params) ? (m.params as string[]) : [];
+        await pace.wait();
         const res = await sendTemplate(
           creds,
           m.phone,
@@ -131,7 +196,8 @@ export async function runCampaign(campaignId: string): Promise<"more" | "done" |
               where: { id: m.id },
               data: { status: "SUBMITTED", gupshupMessageId: res.messageId, submittedAt: new Date(), error: null },
             });
-          } else if (res.retryable && m.attempts < MAX_ATTEMPTS) {
+          } else if (res.retryable && m.attempts < (isRateLimitError(res.error) ? RATE_LIMIT_MAX_ATTEMPTS : MAX_ATTEMPTS)) {
+            if (isRateLimitError(res.error)) pace.slowDown();
             await prisma.message.update({ where: { id: m.id }, data: { status: "QUEUED", error: res.error } });
           } else {
             await prisma.message.update({

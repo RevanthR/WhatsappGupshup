@@ -1,7 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { upsertContact } from "@/lib/send";
 import { normalizePhone } from "@/lib/phone";
+import { isRateLimitError } from "@/lib/errors";
+import { getOrigin } from "@/lib/origin";
+import { kickCampaign, RATE_LIMIT_MAX_ATTEMPTS, reopenCampaign, requeueRateLimited } from "@/lib/worker";
 import type { MessageStatus } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +80,16 @@ async function applyStatus(appId: string, opts: {
   if (RANK[opts.status] <= RANK[msg.status] && opts.status !== "FAILED") return;
   if (msg.status === "READ" && opts.status === "FAILED") return;
   const at = opts.at;
+  // WhatsApp said the number sent too fast. Queue a bulk message again instead of failing it.
+  if (opts.status === "FAILED" && msg.campaignId && isRateLimitError(opts.error) && msg.attempts < RATE_LIMIT_MAX_ATTEMPTS) {
+    const n = await requeueRateLimited({ id: msg.id, campaign: { status: { in: ["RUNNING", "COMPLETED", "PAUSED"] } } });
+    if (n && (await reopenCampaign(msg.campaignId))) {
+      const origin = await getOrigin();
+      const campaignId = msg.campaignId;
+      after(() => kickCampaign(origin, campaignId));
+    }
+    if (n) return;
+  }
   await prisma.message.update({
     where: { id: msg.id },
     data: {

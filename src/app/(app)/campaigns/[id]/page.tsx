@@ -3,18 +3,22 @@ import { ErrorText } from "@/components/error-text";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
-import { isStalled } from "@/lib/worker";
+import { isStalled, RATE_LIMITED } from "@/lib/worker";
 import { varLabels } from "@/lib/template-vars";
 import {
   cancelCampaignAction,
   pauseCampaignAction,
   resumeStalledAction,
+  retryRateLimitedAction,
   startCampaignAction,
 } from "@/app/actions/campaigns";
 import { ConfirmButton, SubmitButton } from "@/components/action-form";
 import { Alert, Badge, Card, fmtDate, PageHeader, Stat, TableWrap } from "@/components/ui";
 import { TemplatePreview } from "@/components/template-preview";
 import { LiveRefresh } from "./live";
+import { CampaignBar } from "@/components/campaign-bar";
+import { countsFrom, etaText, speedFor } from "@/lib/campaign-stats";
+import { draftWarnings } from "@/lib/recipient-history";
 
 const PAGE = 50;
 
@@ -36,7 +40,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
     ...(filter === "PENDING" ? { status: { in: ["QUEUED" as const, "SENDING" as const] } } : {}),
     ...(filter === "DELIVERED" ? { status: { in: ["DELIVERED" as const, "READ" as const] } } : {}),
   };
-  const [failReasons, groups, rows, filteredCount] = await Promise.all([
+  const [failReasons, groups, rows, filteredCount, rateLimited] = await Promise.all([
     prisma.message.groupBy({
       by: ["error"],
       where: { campaignId: id, status: "FAILED" },
@@ -47,6 +51,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
     prisma.message.groupBy({ by: ["status"], where: { campaignId: id }, _count: true }),
     prisma.message.findMany({ where, orderBy: { rowNumber: "asc" }, skip: (page - 1) * PAGE, take: PAGE }),
     prisma.message.count({ where }),
+    prisma.message.count({ where: { AND: [{ campaignId: id, status: "FAILED" }, RATE_LIMITED] } }),
   ]);
   const n = (...s: string[]) => groups.filter((g) => s.includes(g.status)).reduce((a, g) => a + g._count, 0);
   const pending = n("QUEUED", "SENDING");
@@ -56,6 +61,17 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
   const failed = n("FAILED");
   const processed = c.total - pending;
   const pct = c.total ? Math.round((processed / c.total) * 100) : 0;
+  const bar = countsFrom(c.total, groups);
+  const perSec = c.status === "RUNNING" ? (await speedFor([c.id])).get(c.id) ?? 0 : 0;
+  const eta = etaText(pending, perSec);
+  const warn = c.status === "DRAFT" && c.template.category === "MARKETING" ? await draftWarnings(c.id, c.appId) : null;
+  const skipGroups = Object.entries(
+    (Array.isArray(c.skippedRows) ? (c.skippedRows as { reason: string }[]) : []).reduce<Record<string, number>>((a, r) => {
+      const k = r.reason.startsWith("Duplicate") ? "Duplicates" : r.reason.startsWith("Skipped: ") ? r.reason.slice(9).replace(/^./, (x) => x.toUpperCase()) : r.reason;
+      a[k] = (a[k] ?? 0) + 1;
+      return a;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1]);
   const labels = varLabels(c.template);
   const skipped = Array.isArray(c.skippedRows) ? (c.skippedRows as { row: number; raw: string; reason: string }[]) : [];
   const stalled = isStalled(c);
@@ -72,7 +88,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
         title={c.name}
         description={
           <>
-            <Link href="/campaigns" className="text-brand-700 hover:underline">Campaigns</Link> · {c.app.name} ·{" "}
+            <Link href="/campaigns" className="text-brand-700 hover:underline">Bulk send</Link> · {c.app.name} ·{" "}
             <span className="font-mono">{c.template.elementName}</span> · by {c.createdBy.name} · {fmtDate(c.createdAt)}
           </>
         }
@@ -89,7 +105,24 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-3 text-sm text-gray-700">
               <p><b className="text-gray-900">{c.total}</b> valid recipient{c.total === 1 ? "" : "s"} from <span className="font-mono">{c.fileName}</span>.</p>
-              {skipped.length ? <p className="text-amber-700"><b>{skipped.length}</b> row{skipped.length === 1 ? "" : "s"} skipped (listed below). They will not be sent.</p> : null}
+              {skipped.length ? (
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="font-medium text-gray-900">{skipped.length} row{skipped.length === 1 ? "" : "s"} left out (listed below)</p>
+                  <ul className="mt-1 space-y-0.5 text-xs text-gray-600">
+                    {skipGroups.map(([k, v]) => <li key={k}>{k}: <b className="tabular-nums">{v}</b></li>)}
+                  </ul>
+                </div>
+              ) : null}
+              {warn && (warn.recentMarketing || warn.recentCapFailures) ? (
+                <Alert tone="warning">
+                  <p className="font-medium">Some people may not get this marketing message</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs">
+                    {warn.recentMarketing ? <li><b>{warn.recentMarketing}</b> got a marketing message from this number in the last 24 hours.</li> : null}
+                    {warn.recentCapFailures ? <li><b>{warn.recentCapFailures}</b> hit Meta&apos;s marketing limit (131049) in the last 7 days.</li> : null}
+                  </ul>
+                  <p className="mt-1 text-xs">Meta may block these, and they show as failed. Sending later improves the chance.</p>
+                </Alert>
+              ) : null}
               <p>Messages go out in small batches. You can pause or cancel at any time.</p>
               <div className="flex flex-wrap gap-2 pt-2">
                 <form action={startCampaignAction}>
@@ -122,7 +155,19 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
           ) : null}
           <div className="card mb-6 p-4 sm:p-5">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span className="font-medium text-gray-900">{processed} of {c.total} processed ({pct}%)</span>
+              <div>
+                <span className="text-2xl font-semibold tabular-nums text-gray-900">{pct}%</span>
+                <span className="ml-2 font-medium text-gray-700">{processed.toLocaleString("en-IN")} of {c.total.toLocaleString("en-IN")} processed</span>
+                {c.status === "RUNNING" ? (
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    <span className="soft-pulse mr-1.5 inline-block h-2 w-2 rounded-full bg-brand-500 align-middle" />
+                    {perSec > 0 ? `Sending ${perSec < 1 ? perSec.toFixed(1) : Math.round(perSec)}/sec` : "Starting up"}
+                    {eta ? ` · ${eta}` : ""}
+                  </p>
+                ) : c.status === "COMPLETED" && c.completedAt && c.startedAt ? (
+                  <p className="mt-0.5 text-xs text-gray-500">Finished {fmtDate(c.completedAt)}</p>
+                ) : null}
+              </div>
               <div className="flex flex-wrap gap-2">
                 {c.status === "RUNNING" ? (
                   <form action={pauseCampaignAction}><input type="hidden" name="id" value={c.id} /><SubmitButton className="btn-secondary" pendingLabel="Pausing..." toastText="Paused. Messages already sent are not affected.">Pause</SubmitButton></form>
@@ -135,9 +180,7 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
                 ) : null}
               </div>
             </div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${pct}%` }} />
-            </div>
+            <CampaignBar c={bar} running={c.status === "RUNNING"} size="lg" legend />
           </div>
           <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
             <Stat label="Total" value={c.total} />
@@ -151,7 +194,20 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
       )}
 
       {failReasons.length ? (
-        <Card className="mb-6" title="Why messages failed">
+        <Card
+          className="mb-6"
+          title="Why messages failed"
+          actions={
+            rateLimited && ["COMPLETED", "PAUSED", "RUNNING"].includes(c.status) ? (
+              <form action={retryRateLimitedAction}>
+                <input type="hidden" name="id" value={c.id} />
+                <SubmitButton className="btn-primary text-xs" pendingLabel="Queuing..." toastText={`${rateLimited} message${rateLimited === 1 ? "" : "s"} queued again. Sending at a slower pace.`}>
+                  Retry {rateLimited} rate-limited
+                </SubmitButton>
+              </form>
+            ) : null
+          }
+        >
           <ul className="space-y-2">
             {failReasons.map((r) => (
               <li key={r.error ?? "none"} className="flex items-start justify-between gap-3 text-sm">

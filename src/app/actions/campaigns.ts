@@ -7,8 +7,9 @@ import { prisma } from "@/lib/prisma";
 import { appWhere, getAccessibleApp, requireUser, type SessionUser } from "@/lib/access";
 import { parseRecipients, type BadRow } from "@/lib/excel";
 import { getOrigin } from "@/lib/origin";
-import { isStalled, kickCampaign } from "@/lib/worker";
+import { isStalled, kickCampaign, RATE_LIMITED, reopenCampaign, requeueRateLimited } from "@/lib/worker";
 import { renderPreviewText } from "@/lib/template-vars";
+import { knownBadPhones } from "@/lib/recipient-history";
 
 export type UploadState =
   | { error?: string; bad?: BadRow[]; goodCount?: number; overLimit?: boolean }
@@ -36,7 +37,17 @@ export async function uploadBulkAction(_: UploadState, form: FormData): Promise<
   } catch (e) {
     return { error: (e as Error).message || "Could not read the file." };
   }
-  const { good, bad, overLimit } = parsed;
+  const { bad, overLimit } = parsed;
+  let { good } = parsed;
+  // Leave out numbers earlier sends proved unreachable (unless the user turned this off).
+  if (form.get("skipKnownBad") === "on" && good.length) {
+    const skip = await knownBadPhones(app.id, good.map((r) => r.phone), template.category === "MARKETING");
+    if (skip.size) {
+      for (const r of good) if (skip.has(r.phone)) bad.push({ row: r.row, raw: `+${r.phone}`, reason: skip.get(r.phone)! });
+      good = good.filter((r) => !skip.has(r.phone));
+      bad.sort((a, b) => a.row - b.row);
+    }
+  }
   if (good.length === 0) {
     return { error: "No valid rows found.", bad: bad.slice(0, 500), goodCount: 0, overLimit };
   }
@@ -129,6 +140,16 @@ export async function resumeStalledAction(form: FormData) {
   const user = await requireUser();
   const c = await ownCampaign(user, String(form.get("id")));
   if (c.status === "RUNNING") await kickLater(c.id);
+  revalidatePath(`/campaigns/${c.id}`);
+}
+
+// Sends rate-limited failures again. Other failures are left alone.
+export async function retryRateLimitedAction(form: FormData) {
+  const user = await requireUser();
+  const c = await ownCampaign(user, String(form.get("id")));
+  if (!["COMPLETED", "PAUSED", "RUNNING"].includes(c.status)) return;
+  const n = await requeueRateLimited({ AND: [{ campaignId: c.id, status: "FAILED" }, RATE_LIMITED] });
+  if (n && (await reopenCampaign(c.id))) await kickLater(c.id);
   revalidatePath(`/campaigns/${c.id}`);
 }
 

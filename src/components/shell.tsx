@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
+import { ActivityWatcher } from "@/components/activity-watcher";
+import { setSound, useSound } from "@/components/sound";
 
 type NavItem = { href: string; label: string; icon: ReactNode; badge?: number; also?: string[] };
 type NavGroup = { title?: string; admin?: boolean; items: NavItem[] };
@@ -11,7 +13,6 @@ const I = {
   home: <path d="M3 10.5 12 3l9 7.5V21H15v-6H9v6H3z" />,
   send: <path d="M3 11.5 21 3l-8.5 18-2.2-7.3z" />,
   bulk: <path d="M4 4h16v4H4zM4 10h16v4H4zM4 16h16v4H4z" />,
-  camp: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   inbox: <path d="M3 13h5l2 3h4l2-3h5M5 4h14l2 9v7H3v-7z" />,
   log: <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />,
   acct: <path d="M3 21V7l9-4 9 4v14M9 21v-6h6v6" />,
@@ -41,14 +42,14 @@ export function Shell({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const sound = useSound();
 
   const groups: NavGroup[] = [
     {
       items: [
         { href: "/", label: "Dashboard", icon: I.home },
         { href: "/send", label: "Send message", icon: I.send },
-        { href: "/bulk", label: "Bulk send", icon: I.bulk },
-        { href: "/campaigns", label: "Campaigns", icon: I.camp },
+        { href: "/campaigns", label: "Bulk send", icon: I.bulk, also: ["/bulk"] },
         { href: "/inbox", label: "Inbox", icon: I.inbox, badge: unread },
         { href: "/messages", label: "Message log", icon: I.log },
       ],
@@ -100,6 +101,14 @@ export function Shell({
         {user.role === "SUPER_ADMIN" ? <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Super admin</p> : null}
       </div>
       <div className="flex gap-1">
+        <button
+          className="btn-ghost flex-1 text-xs"
+          onClick={() => setSound(!sound)}
+          title="Play a soft sound for new replies and finished campaigns"
+          aria-pressed={sound}
+        >
+          {sound ? "Sound on" : "Sound off"}
+        </button>
         <Link href="/change-password" onClick={() => setOpen(false)} className="btn-ghost flex-1 text-xs">
           Password
         </Link>
@@ -157,6 +166,7 @@ export function Shell({
         </div>
       ) : null}
 
+      <ActivityWatcher />
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</div>
       </main>

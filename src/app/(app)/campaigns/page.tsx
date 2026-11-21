@@ -2,8 +2,15 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
 import { Badge, Empty, fmtDate, PageHeader } from "@/components/ui";
+import { DeliveryStats } from "@/components/delivery-stats";
+import { CampaignBar, processedPct } from "@/components/campaign-bar";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { countsFor, etaText, speedFor, type CampaignCounts } from "@/lib/campaign-stats";
+import { daysAgo } from "@/lib/send";
 
-export const metadata = { title: "Campaigns" };
+export const metadata = { title: "Bulk send" };
+
+const EMPTY: CampaignCounts = { total: 0, queued: 0, waiting: 0, delivered: 0, read: 0, failed: 0 };
 
 export default async function CampaignsPage() {
   const user = await requireUser();
@@ -13,80 +20,80 @@ export default async function CampaignsPage() {
     orderBy: { createdAt: "desc" },
     take: 100,
   });
-  const ids = campaigns.map((c) => c.id);
-  const groups = ids.length
-    ? await prisma.message.groupBy({ by: ["campaignId", "status"], where: { campaignId: { in: ids } }, _count: true })
-    : [];
-  const stats = new Map<string, { done: number; delivered: number; failed: number }>();
-  for (const g of groups) {
-    const s = stats.get(g.campaignId!) ?? { done: 0, delivered: 0, failed: 0 };
-    if (!["QUEUED", "SENDING"].includes(g.status)) s.done += g._count;
-    if (["DELIVERED", "READ"].includes(g.status)) s.delivered += g._count;
-    if (g.status === "FAILED") s.failed += g._count;
-    stats.set(g.campaignId!, s);
-  }
+  const running = campaigns.filter((c) => c.status === "RUNNING").map((c) => c.id);
+  const [stats, speed] = await Promise.all([countsFor(campaigns), speedFor(running)]);
+
+  const live = (id: string, queued: number) => {
+    const s = speed.get(id) ?? 0;
+    const eta = etaText(queued, s);
+    return s > 0 ? `${s < 1 ? s.toFixed(1) : Math.round(s)}/sec${eta ? ` · ${eta}` : ""}` : "Starting up";
+  };
 
   return (
     <>
-      <PageHeader title="Campaigns" description="Bulk sends and their progress." actions={<Link href="/bulk" className="btn-primary">New bulk send</Link>} />
-      {campaigns.length === 0 ? (
-        <Empty title="No campaigns yet">Start one from <Link href="/bulk" className="text-brand-700 hover:underline">Bulk send</Link>.</Empty>
-      ) : (
+      <AutoRefresh active={running.length > 0} />
+      <PageHeader title="Bulk send" description="Send one template to many numbers from an Excel file. Each upload is a campaign." actions={<Link href="/bulk" className="btn-primary">+ New bulk send</Link>} />
+      {campaigns.length ? (
         <>
-          {/* Cards on small screens */}
-          <ul className="space-y-3 md:hidden">
-            {campaigns.map((c) => {
-              const s = stats.get(c.id) ?? { done: 0, delivered: 0, failed: 0 };
-              return (
-                <li key={c.id}>
-                  <Link href={`/campaigns/${c.id}`} className="card block p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="font-medium text-gray-900">{c.name}</p>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Last 30 days</p>
+          <DeliveryStats
+            where={{ app: appWhere(user), campaignId: { not: null }, createdAt: { gte: daysAgo(30) } }}
+            link={(k) => `/messages?dir=bulk&range=30d${k ? `&status=${k}` : ""}`}
+          />
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Campaigns</p>
+        </>
+      ) : null}
+      {campaigns.length === 0 ? (
+        <Empty title="No bulk sends yet"><Link href="/bulk" className="text-brand-700 hover:underline">Start your first bulk send</Link>. Download the Excel for a template, fill in numbers, upload.</Empty>
+      ) : (
+        <ul className="space-y-3">
+          {campaigns.map((c) => {
+            const s = stats.get(c.id) ?? { ...EMPTY, total: c.total };
+            const isRunning = c.status === "RUNNING";
+            const reached = s.delivered + s.read;
+            const done = c.total - s.queued;
+            return (
+              <li key={c.id}>
+                <Link href={`/campaigns/${c.id}`} className={`card block p-4 transition hover:-translate-y-px hover:shadow-md sm:p-5 ${isRunning ? "ring-1 ring-brand-200" : ""}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-gray-900">{c.name}</p>
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        {c.app.name} · <span className="font-mono">{c.template.elementName}</span> · by {c.createdBy.name} · {fmtDate(c.createdAt)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {c.status !== "DRAFT" ? <span className="text-sm font-semibold tabular-nums text-gray-900">{processedPct(s)}%</span> : null}
                       <Badge value={c.status} />
                     </div>
-                    <p className="mt-1 text-xs text-gray-500">{c.app.name} · {c.template.elementName} · {fmtDate(c.createdAt)}</p>
-                    <Progress done={s.done} total={c.total} />
-                    <p className="mt-1 text-xs text-gray-600">{s.done}/{c.total} processed · {s.delivered} delivered · {s.failed} failed</p>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-          {/* Table on larger screens */}
-          <div className="card hidden overflow-hidden md:block">
-            <table className="table">
-              <thead>
-                <tr><th>Campaign</th><th>Number / template</th><th>Status</th><th className="w-48">Progress</th><th>Delivered</th><th>Failed</th><th>Created</th></tr>
-              </thead>
-              <tbody>
-                {campaigns.map((c) => {
-                  const s = stats.get(c.id) ?? { done: 0, delivered: 0, failed: 0 };
-                  return (
-                    <tr key={c.id} className="hover:bg-gray-50">
-                      <td><Link href={`/campaigns/${c.id}`} className="font-medium text-gray-900 hover:text-brand-700">{c.name}</Link><p className="text-xs text-gray-500">by {c.createdBy.name}</p></td>
-                      <td className="text-gray-700">{c.app.name}<p className="font-mono text-xs text-gray-500">{c.template.elementName}</p></td>
-                      <td><Badge value={c.status} /></td>
-                      <td><Progress done={s.done} total={c.total} /><p className="mt-1 text-xs text-gray-500">{s.done}/{c.total}</p></td>
-                      <td className="tabular-nums">{s.delivered}</td>
-                      <td className="tabular-nums">{s.failed}</td>
-                      <td className="whitespace-nowrap text-gray-500">{fmtDate(c.createdAt)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
+                  </div>
+                  {c.status === "DRAFT" ? (
+                    <p className="mt-3 text-sm text-amber-700">Uploaded, not started. {c.total.toLocaleString("en-IN")} recipients waiting for your review.</p>
+                  ) : (
+                    <>
+                      <div className="mt-3">
+                        <CampaignBar c={s} running={isRunning} />
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                        <span className="tabular-nums">{done.toLocaleString("en-IN")} / {c.total.toLocaleString("en-IN")} processed</span>
+                        <span className="tabular-nums text-emerald-700">{reached.toLocaleString("en-IN")} delivered{done ? ` (${Math.round((reached / done) * 100)}%)` : ""}</span>
+                        <span className="tabular-nums text-brand-700">{s.read.toLocaleString("en-IN")} read</span>
+                        {s.failed ? <span className="tabular-nums text-red-700">{s.failed.toLocaleString("en-IN")} failed</span> : null}
+                        {isRunning ? (
+                          <span className="text-gray-500">
+                            <span className="soft-pulse mr-1 inline-block h-1.5 w-1.5 rounded-full bg-brand-500 align-middle" />
+                            {live(c.id, s.queued)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </>
-  );
-}
-
-function Progress({ done, total }: { done: number; total: number }) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  return (
-    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-      <div className="h-full rounded-full bg-brand-500" style={{ width: `${pct}%` }} />
-    </div>
   );
 }
