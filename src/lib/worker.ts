@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { credsFor, mediaHeader } from "@/lib/send";
 import { renderPreviewText } from "@/lib/template-vars";
 import { sendTemplate } from "@/lib/gupshup";
-import { isRateLimitError } from "@/lib/errors";
+import { isRateLimitError, isSpamLimitError } from "@/lib/errors";
 import type { Prisma } from "@/generated/prisma/client";
 
 // Bulk sending runs in short chained invocations ("the app calls itself").
@@ -103,9 +103,10 @@ function pacer(perSecond: number) {
   };
 }
 
-// Puts rate-limited failures back in the queue so the worker sends them again.
-// Works on messages that failed, or that WhatsApp is about to report as failed.
-export async function requeueRateLimited(where: Prisma.MessageWhereInput): Promise<number> {
+// Puts failed messages back in the queue so the worker sends them again.
+// Also takes messages WhatsApp is reporting as failed right now (auto-retry from the webhook).
+// `fresh` resets the attempt count, for retries the user asked for.
+export async function requeueFailed(where: Prisma.MessageWhereInput, note: string, fresh = false): Promise<number> {
   const res = await prisma.message.updateMany({
     where: { AND: [where, { status: { in: ["FAILED", "SUBMITTED", "ENQUEUED", "SENT"] } }] },
     data: {
@@ -115,16 +116,37 @@ export async function requeueRateLimited(where: Prisma.MessageWhereInput): Promi
       submittedAt: null,
       sentAt: null,
       failedAt: null,
-      error: "Rate limited by WhatsApp. Retrying.",
+      error: note,
+      ...(fresh ? { attempts: 0 } : {}),
     },
   });
   return res.count;
 }
 
+export const requeueRateLimited = (where: Prisma.MessageWhereInput) => requeueFailed(where, "Rate limited by WhatsApp. Retrying.");
+
+// How many spam-limit failures pause a campaign by itself.
+export const SPAM_PAUSE_AT = Number(process.env.SPAM_PAUSE_AT) || 20;
+export const SPAM_LIMITED: Prisma.MessageWhereInput = {
+  OR: [{ error: { contains: "471" } }, { error: { contains: "131048" } }],
+};
+
+// Pauses a running campaign once WhatsApp has flagged the number for spam a few times,
+// so the rest of the list is not burned and the number's quality does not drop further.
+export async function maybeAutoPause(campaignId: string): Promise<boolean> {
+  const n = await prisma.message.count({ where: { AND: [{ campaignId, status: "FAILED" }, SPAM_LIMITED] } });
+  if (n < SPAM_PAUSE_AT) return false;
+  const res = await prisma.campaign.updateMany({
+    where: { id: campaignId, status: "RUNNING" },
+    data: { status: "PAUSED", pausedReason: `WhatsApp limited this number for spam (${n} messages failed with 471). Sending stopped to protect the number.` },
+  });
+  return res.count > 0;
+}
+
 // Reopens a finished campaign that got messages back in its queue.
 // Returns true when it is running and no worker holds it, so it needs a kick.
 export async function reopenCampaign(campaignId: string): Promise<boolean> {
-  await prisma.campaign.updateMany({ where: { id: campaignId, status: "COMPLETED" }, data: { status: "RUNNING", completedAt: null } });
+  await prisma.campaign.updateMany({ where: { id: campaignId, status: { in: ["COMPLETED", "CANCELLED"] } }, data: { status: "RUNNING", completedAt: null, pausedReason: null } });
   const c = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { status: true, leaseUntil: true } });
   return c?.status === "RUNNING" && (!c.leaseUntil || c.leaseUntil.getTime() < Date.now());
 }
@@ -179,6 +201,7 @@ export async function runCampaign(campaignId: string): Promise<"more" | "done" |
         continue;
       }
 
+      let spamSeen = false;
       await pool(batch, CONCURRENCY, async (m) => {
         const params = Array.isArray(m.params) ? (m.params as string[]) : [];
         await pace.wait();
@@ -189,6 +212,7 @@ export async function runCampaign(campaignId: string): Promise<"more" | "done" |
           params,
           mediaHeader(campaign.template, m.mediaUrl),
         );
+        if (!res.ok && isSpamLimitError(res.error)) spamSeen = true;
         // Each message is recorded on its own so one bad write never stalls the batch.
         try {
           if (res.ok) {
@@ -245,6 +269,7 @@ export async function runCampaign(campaignId: string): Promise<"more" | "done" |
         where: { id: campaignId },
         data: { lastTickAt: new Date(), leaseUntil: new Date(Date.now() + LEASE_MS) },
       });
+      if (spamSeen && (await maybeAutoPause(campaignId))) return "stopped";
     }
 
     const remaining = await prisma.message.count({ where: { campaignId, status: { in: ["QUEUED", "SENDING"] } } });

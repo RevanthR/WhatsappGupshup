@@ -31,7 +31,7 @@ export function ActivityWatcher() {
         since.current = res.now;
         for (const c of res.running) watch.current.add(c.id);
         for (const f of res.finished) watch.current.delete(f.id);
-        const completed = res.finished.filter((f) => f.status === "COMPLETED");
+        const completed = res.finished.filter((f) => f.status === "COMPLETED" || (f.status === "PAUSED" && f.pausedReason));
         if (completed.length) {
           setDone((d) => [...d.filter((x) => !completed.some((c) => c.id === x.id)), ...completed].slice(-2));
           chime();
@@ -73,12 +73,14 @@ export function ActivityWatcher() {
     <div className="pointer-events-none fixed bottom-4 left-4 z-40 flex w-[calc(100%-2rem)] max-w-xs flex-col gap-2 lg:left-[17rem]">
       {done.map((f) => {
         const reached = f.counts.delivered + f.counts.read;
+        const paused = f.status === "PAUSED";
         return (
-          <div key={f.id} className="pop-in pointer-events-auto rounded-xl border border-emerald-200 bg-white p-4 shadow-lg">
+          <div key={f.id} className={`pop-in pointer-events-auto rounded-xl border bg-white p-4 shadow-lg ${paused ? "border-red-200" : "border-emerald-200"}`}>
             <div className="flex items-start gap-3">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">✓</span>
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${paused ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>{paused ? "!" : "✓"}</span>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-gray-900">Campaign finished</p>
+                <p className="text-sm font-semibold text-gray-900">{paused ? "Campaign paused automatically" : "Campaign finished"}</p>
+                {paused ? <p className="text-xs text-red-700">WhatsApp flagged this number for spam.</p> : null}
                 <p className="truncate text-sm text-gray-600">{f.name}</p>
                 <p className="mt-1 text-xs text-gray-600">
                   <b className="text-emerald-700">{reached.toLocaleString("en-IN")}</b> delivered so far
@@ -91,8 +93,8 @@ export function ActivityWatcher() {
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href={`/campaigns/${f.id}`} className="btn-primary px-3 py-1.5 text-xs" onClick={() => setDone((d) => d.filter((x) => x.id !== f.id))}>View results</Link>
               <a href={`/api/campaigns/${f.id}/export`} className="btn-secondary px-3 py-1.5 text-xs">Download</a>
-              {f.rateLimited ? (
-                <Link href={`/campaigns/${f.id}?status=FAILED`} className="btn-secondary px-3 py-1.5 text-xs">Retry {f.rateLimited} rate-limited</Link>
+              {f.retryable && !paused ? (
+                <Link href={`/campaigns/${f.id}?status=FAILED`} className="btn-secondary px-3 py-1.5 text-xs">Retry {f.retryable} failed</Link>
               ) : null}
             </div>
           </div>

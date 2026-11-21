@@ -24,6 +24,7 @@ const META: Record<string, string> = {
   "132016": "Template is disabled by Meta for low quality.",
   "130472": "Meta held this marketing message back as part of an experiment. Not your fault.",
   "130429": "WhatsApp rate limit reached. Sending will slow down.",
+  "471": "WhatsApp limited this number for spam, because many people blocked or reported earlier messages. Pause marketing and check the number's quality.",
   "429": "Sent faster than this WhatsApp number allows. WA Sender now slows down and retries these on its own.",
   "470": "More than 24 hours since this person last messaged you. Only templates can be sent now.",
   "1013": "This number is not on WhatsApp.",
@@ -41,7 +42,7 @@ const GUPSHUP: [RegExp, string][] = [
 
 export function friendlyError(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const code = raw.match(/\b(1[0-9]{3,5}|470|429)\b/)?.[1];
+  const code = raw.match(/\b(1[0-9]{3,5}|470|471|429)\b/)?.[1];
   if (code && META[code]) return META[code];
   for (const [re, text] of GUPSHUP) if (re.test(raw)) return text;
   return null;
@@ -50,4 +51,24 @@ export function friendlyError(raw: string | null | undefined): string | null {
 // WhatsApp or Gupshup throughput limits. Safe to send again after a pause.
 export function isRateLimitError(raw: string | null | undefined): boolean {
   return !!raw && /(^|\D)(429|130429)(\D|$)/.test(raw);
+}
+
+// WhatsApp restricted the number for spam or quality. Sending more makes it worse.
+export function isSpamLimitError(raw: string | null | undefined): boolean {
+  return !!raw && /(^|\D)(471|131048)(\D|$)/.test(raw);
+}
+
+export type RetryKind = "safe" | "wait" | "no" | "unknown";
+
+// Whether resending a failed message can help, with a short reason for the UI.
+export function retryAdvice(raw: string | null | undefined): { kind: RetryKind; hint: string } {
+  const e = raw ?? "";
+  if (isRateLimitError(e) || /(^|\D)131056(\D|$)/.test(e)) return { kind: "safe", hint: "Safe to retry" };
+  if (/Network error|Gupshup 5\d\d|Interrupted while sending|Cancelled before sending|(^|\D)131000(\D|$)/.test(e)) return { kind: "safe", hint: "Safe to retry" };
+  if (/(^|\D)131049(\D|$)/.test(e)) return { kind: "wait", hint: "Retry after a day or two" };
+  if (isSpamLimitError(e)) return { kind: "wait", hint: "Retry only after the number's quality recovers" };
+  if (/(^|\D)(131026|1013|131050|131047|470|131021|132\d{3})(\D|$)|Invalid destination/i.test(e)) {
+    return { kind: "no", hint: /132\d{3}/.test(e) ? "Won't help. Fix the template first" : "Won't help" };
+  }
+  return { kind: "unknown", hint: "May or may not help" };
 }

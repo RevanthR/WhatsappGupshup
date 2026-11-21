@@ -7,7 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { appWhere, getAccessibleApp, requireUser, type SessionUser } from "@/lib/access";
 import { parseRecipients, type BadRow } from "@/lib/excel";
 import { getOrigin } from "@/lib/origin";
-import { isStalled, kickCampaign, RATE_LIMITED, reopenCampaign, requeueRateLimited } from "@/lib/worker";
+import { isStalled, kickCampaign, reopenCampaign, requeueFailed } from "@/lib/worker";
+import { retryAdvice } from "@/lib/errors";
 import { renderPreviewText } from "@/lib/template-vars";
 import { knownBadPhones } from "@/lib/recipient-history";
 
@@ -103,7 +104,7 @@ export async function startCampaignAction(form: FormData) {
   if (c.status !== "DRAFT" && c.status !== "PAUSED") return;
   await prisma.campaign.update({
     where: { id: c.id },
-    data: { status: "RUNNING", startedAt: c.startedAt ?? new Date(), lastTickAt: new Date() },
+    data: { status: "RUNNING", startedAt: c.startedAt ?? new Date(), lastTickAt: new Date(), pausedReason: null },
   });
   await kickLater(c.id);
   revalidatePath(`/campaigns/${c.id}`);
@@ -143,12 +144,23 @@ export async function resumeStalledAction(form: FormData) {
   revalidatePath(`/campaigns/${c.id}`);
 }
 
-// Sends rate-limited failures again. Other failures are left alone.
-export async function retryRateLimitedAction(form: FormData) {
+// Retries failed messages of one campaign: one failure reason (`reason`, the exact error text,
+// or "__none" for no text) or every reason that is safe to retry ("__safe").
+export async function retryFailedAction(form: FormData) {
   const user = await requireUser();
   const c = await ownCampaign(user, String(form.get("id")));
-  if (!["COMPLETED", "PAUSED", "RUNNING"].includes(c.status)) return;
-  const n = await requeueRateLimited({ AND: [{ campaignId: c.id, status: "FAILED" }, RATE_LIMITED] });
+  if (c.status === "DRAFT") return;
+  const reason = String(form.get("reason") ?? "");
+  let where;
+  if (reason === "__safe") {
+    const groups = await prisma.message.groupBy({ by: ["error"], where: { campaignId: c.id, status: "FAILED" }, _count: true });
+    const safe = groups.map((g) => g.error).filter((e) => retryAdvice(e).kind === "safe");
+    if (!safe.length) return;
+    where = { campaignId: c.id, status: "FAILED" as const, OR: safe.map((e) => ({ error: e })) };
+  } else {
+    where = { campaignId: c.id, status: "FAILED" as const, error: reason === "__none" ? null : reason };
+  }
+  const n = await requeueFailed(where, "Retry requested. Waiting to send.", true);
   if (n && (await reopenCampaign(c.id))) await kickLater(c.id);
   revalidatePath(`/campaigns/${c.id}`);
 }

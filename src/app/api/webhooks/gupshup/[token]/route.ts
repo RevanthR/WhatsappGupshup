@@ -2,9 +2,9 @@ import { after, NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { upsertContact } from "@/lib/send";
 import { normalizePhone } from "@/lib/phone";
-import { isRateLimitError } from "@/lib/errors";
+import { isRateLimitError, isSpamLimitError } from "@/lib/errors";
 import { getOrigin } from "@/lib/origin";
-import { kickCampaign, RATE_LIMIT_MAX_ATTEMPTS, reopenCampaign, requeueRateLimited } from "@/lib/worker";
+import { kickCampaign, maybeAutoPause, RATE_LIMIT_MAX_ATTEMPTS, reopenCampaign, requeueRateLimited } from "@/lib/worker";
 import type { MessageStatus } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -101,6 +101,7 @@ async function applyStatus(appId: string, opts: {
       ...(opts.status === "FAILED" ? { failedAt: at, error: opts.error ?? msg.error } : {}),
     },
   });
+  if (opts.status === "FAILED" && msg.campaignId && isSpamLimitError(opts.error)) await maybeAutoPause(msg.campaignId);
 }
 
 async function storeInbound(appId: string, opts: {

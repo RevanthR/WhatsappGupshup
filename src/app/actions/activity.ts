@@ -4,12 +4,13 @@ import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
 import { getOrigin } from "@/lib/origin";
-import { isStalled, kickCampaign, RATE_LIMITED } from "@/lib/worker";
+import { isStalled, kickCampaign } from "@/lib/worker";
+import { retryAdvice } from "@/lib/errors";
 import { countsFor, etaText, speedFor, type CampaignCounts } from "@/lib/campaign-stats";
 import { formatPhone } from "@/lib/phone";
 
 export type ActiveCampaign = { id: string; name: string; counts: CampaignCounts; perSec: number; eta: string | null };
-export type FinishedCampaign = { id: string; name: string; status: string; counts: CampaignCounts; rateLimited: number };
+export type FinishedCampaign = { id: string; name: string; status: string; pausedReason: string | null; counts: CampaignCounts; retryable: number };
 export type NewReply = { id: string; contactId: string | null; from: string; appName: string; text: string };
 export type Activity = {
   now: string;
@@ -43,15 +44,15 @@ export async function activityAction(watch: string[], repliesSince: string | nul
   const finished = doneIds.length
     ? await prisma.campaign.findMany({
         where: { id: { in: doneIds }, app: appWhere(user), status: { in: ["COMPLETED", "CANCELLED", "PAUSED"] } },
-        select: { id: true, name: true, total: true, status: true },
+        select: { id: true, name: true, total: true, status: true, pausedReason: true },
       })
     : [];
 
-  const [counts, speed, rateLimited] = await Promise.all([
+  const [counts, speed, failGroups] = await Promise.all([
     countsFor([...running, ...finished]),
     speedFor(running.map((c) => c.id)),
     finished.length
-      ? prisma.message.groupBy({ by: ["campaignId"], where: { AND: [{ campaignId: { in: finished.map((f) => f.id) }, status: "FAILED" }, RATE_LIMITED] }, _count: true })
+      ? prisma.message.groupBy({ by: ["campaignId", "error"], where: { campaignId: { in: finished.map((f) => f.id) }, status: "FAILED" }, _count: true })
       : Promise.resolve([]),
   ]);
 
@@ -77,8 +78,9 @@ export async function activityAction(watch: string[], repliesSince: string | nul
       id: f.id,
       name: f.name,
       status: f.status,
+      pausedReason: f.pausedReason,
       counts: counts.get(f.id)!,
-      rateLimited: rateLimited.find((r) => r.campaignId === f.id)?._count ?? 0,
+      retryable: failGroups.filter((g) => g.campaignId === f.id && retryAdvice(g.error).kind === "safe").reduce((a, g) => a + g._count, 0),
     })),
     replies: replies.map((m) => ({
       id: m.id,

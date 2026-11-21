@@ -3,13 +3,14 @@ import { ErrorText } from "@/components/error-text";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { appWhere, requireUser } from "@/lib/access";
-import { isStalled, RATE_LIMITED } from "@/lib/worker";
+import { isStalled } from "@/lib/worker";
+import { retryAdvice } from "@/lib/errors";
 import { varLabels } from "@/lib/template-vars";
 import {
   cancelCampaignAction,
   pauseCampaignAction,
   resumeStalledAction,
-  retryRateLimitedAction,
+  retryFailedAction,
   startCampaignAction,
 } from "@/app/actions/campaigns";
 import { ConfirmButton, SubmitButton } from "@/components/action-form";
@@ -21,6 +22,13 @@ import { countsFrom, etaText, speedFor } from "@/lib/campaign-stats";
 import { draftWarnings } from "@/lib/recipient-history";
 
 const PAGE = 50;
+
+const ADVICE_CLS = {
+  safe: "bg-emerald-50 text-emerald-700",
+  wait: "bg-amber-50 text-amber-700",
+  no: "bg-gray-100 text-gray-600",
+  unknown: "bg-sky-50 text-sky-700",
+} as const;
 
 export default async function CampaignPage({ params, searchParams }: PageProps<"/campaigns/[id]">) {
   const { id } = await params;
@@ -40,18 +48,17 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
     ...(filter === "PENDING" ? { status: { in: ["QUEUED" as const, "SENDING" as const] } } : {}),
     ...(filter === "DELIVERED" ? { status: { in: ["DELIVERED" as const, "READ" as const] } } : {}),
   };
-  const [failReasons, groups, rows, filteredCount, rateLimited] = await Promise.all([
+  const [failReasons, groups, rows, filteredCount] = await Promise.all([
     prisma.message.groupBy({
       by: ["error"],
       where: { campaignId: id, status: "FAILED" },
       _count: true,
       orderBy: { _count: { error: "desc" } },
-      take: 5,
+      take: 12,
     }),
     prisma.message.groupBy({ by: ["status"], where: { campaignId: id }, _count: true }),
     prisma.message.findMany({ where, orderBy: { rowNumber: "asc" }, skip: (page - 1) * PAGE, take: PAGE }),
     prisma.message.count({ where }),
-    prisma.message.count({ where: { AND: [{ campaignId: id, status: "FAILED" }, RATE_LIMITED] } }),
   ]);
   const n = (...s: string[]) => groups.filter((g) => s.includes(g.status)).reduce((a, g) => a + g._count, 0);
   const pending = n("QUEUED", "SENDING");
@@ -72,6 +79,12 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
       return a;
     }, {}),
   ).sort((a, b) => b[1] - a[1]);
+  const canRetry = c.status !== "DRAFT";
+  const safeCount = failReasons.filter((r) => retryAdvice(r.error).kind === "safe").reduce((a, r) => a + r._count, 0);
+  const retryToast = (n: number) =>
+    c.status === "PAUSED"
+      ? `${n} message${n === 1 ? "" : "s"} queued again. Resume the campaign to send them.`
+      : `${n} message${n === 1 ? "" : "s"} queued again. Sending shortly.`;
   const labels = varLabels(c.template);
   const skipped = Array.isArray(c.skippedRows) ? (c.skippedRows as { row: number; raw: string; reason: string }[]) : [];
   const stalled = isStalled(c);
@@ -140,6 +153,17 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
         </Card>
       ) : (
         <>
+          {c.status === "PAUSED" && c.pausedReason ? (
+            <div className="mb-4">
+              <Alert tone="error">
+                <p className="font-medium">Paused automatically</p>
+                <p className="mt-1">{c.pausedReason}</p>
+                <p className="mt-1 text-xs">
+                  Check the number&apos;s quality in Gupshup or Meta WhatsApp Manager. Resume only when it is green again, ideally with people who opted in.
+                </p>
+              </Alert>
+            </div>
+          ) : null}
           {stalled ? (
             <div className="mb-4">
               <Alert tone="warning">
@@ -198,23 +222,49 @@ export default async function CampaignPage({ params, searchParams }: PageProps<"
           className="mb-6"
           title="Why messages failed"
           actions={
-            rateLimited && ["COMPLETED", "PAUSED", "RUNNING"].includes(c.status) ? (
-              <form action={retryRateLimitedAction}>
+            canRetry && safeCount ? (
+              <form action={retryFailedAction}>
                 <input type="hidden" name="id" value={c.id} />
-                <SubmitButton className="btn-primary text-xs" pendingLabel="Queuing..." toastText={`${rateLimited} message${rateLimited === 1 ? "" : "s"} queued again. Sending at a slower pace.`}>
-                  Retry {rateLimited} rate-limited
+                <input type="hidden" name="reason" value="__safe" />
+                <SubmitButton className="btn-primary text-xs" pendingLabel="Queuing..." toastText={retryToast(safeCount)}>
+                  Retry all safe ({safeCount.toLocaleString("en-IN")})
                 </SubmitButton>
               </form>
             ) : null
           }
         >
-          <ul className="space-y-2">
-            {failReasons.map((r) => (
-              <li key={r.error ?? "none"} className="flex items-start justify-between gap-3 text-sm">
-                <ErrorText error={r.error ?? "Unknown error"} />
-                <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold tabular-nums text-red-700">{r._count}</span>
-              </li>
-            ))}
+          <ul className="divide-y divide-gray-100">
+            {failReasons.map((r) => {
+              const adv = retryAdvice(r.error);
+              const reason = r.error ?? "__none";
+              return (
+                <li key={reason} className="flex flex-col gap-2 py-3 text-sm first:pt-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <ErrorText error={r.error ?? "Unknown error"} />
+                    <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${ADVICE_CLS[adv.kind]}`}>{adv.hint}</span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold tabular-nums text-red-700">{r._count.toLocaleString("en-IN")}</span>
+                    {canRetry && adv.kind === "safe" ? (
+                      <form action={retryFailedAction}>
+                        <input type="hidden" name="id" value={c.id} />
+                        <input type="hidden" name="reason" value={reason} />
+                        <SubmitButton className="btn-secondary px-3 py-1.5 text-xs" pendingLabel="Queuing..." toastText={retryToast(r._count)}>Retry</SubmitButton>
+                      </form>
+                    ) : canRetry && adv.kind !== "no" ? (
+                      <ConfirmButton
+                        action={retryFailedAction}
+                        fields={{ id: c.id, reason }}
+                        label="Retry anyway"
+                        className="btn-secondary px-3 py-1.5 text-xs"
+                        confirm={adv.kind === "wait" ? `${adv.hint}. Retry ${r._count} now?` : `Retry ${r._count}?`}
+                        toastText={retryToast(r._count)}
+                      />
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </Card>
       ) : null}

@@ -147,6 +147,8 @@ model Campaign {
   leaseUntil  DateTime?
   startedAt   DateTime?
   completedAt DateTime?
+  // Set when WA Sender paused the campaign by itself, e.g. after spam-limit failures.
+  pausedReason String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
